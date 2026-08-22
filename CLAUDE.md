@@ -48,7 +48,7 @@ hanhua_v2.py     主脚本：加载字典 → 生成引擎 JS → 启动 Antigra
   ├ build_engine_js()   把字典嵌进一段 IIFE 模板字符串（整个翻译引擎都在这里面）
   ├ wait_for_debug_port() 轮询 /json 找主界面页
   └ cdp_inject()        等就绪 → 注册 document-start 脚本 → 注入 → 守护补注
-caiji.py         界面文本采集器（CDP 抓页面英文 → pending.json）
+caiji.py         界面文本采集器（CDP 抓页面英文 → pending.json；--misses 拉取引擎未命中日志 → misses.json）
 qidong.bat       一键启动器（taskkill → 调 hanhua_v2.py）
 dicts/*.json     字典，格式 {"英文原文": "中文译文"}
 ```
@@ -136,6 +136,11 @@ Python 的字符串转义层会介入，见下文「转义陷阱」。
 同一条翻译存在两处，改一处另一处就会漂移。`common.json` 是通用词的唯一归属地。
 
 新增翻译只需在 `dicts/` 下加 JSON，不用改代码。
+
+官方更新后的词条漂移检查：引擎把「含英文、未进禁区、但没翻出来」的文本记进
+`misses`（内存 Set，上限 2000，重复注入即重置；只记文本节点不记属性——属性
+不查禁区，会话标题这类用户内容会混进来）。`python caiji.py --misses` 拉取，
+产物 `misses.json` 已进 .gitignore。
 
 **三条铁律**：
 

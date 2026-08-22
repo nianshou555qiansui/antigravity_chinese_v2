@@ -99,6 +99,12 @@ def build_engine_js(dict_map):
     // 记录每个文本节点上一次处理过的值：值没变就跳过，避免重复开销
     const lastSeen = new WeakMap();
 
+    // 词条漂移日志：记下「含英文、未进禁区、但整条没翻出来」的文本。
+    // 官方更新后用 caiji.py --misses 拉取，即可看出哪些词条失效或缺失。
+    // 只记文本节点不记属性——属性不查禁区，会话标题这类用户内容会混进来。
+    // 上限 2000 防病态增长；重复注入会重置（会话级日志，够用）。
+    const misses = new Set();
+
     // 保护名单：产品名/品牌，禁止子串替换（防止被部分匹配切碎）
     // 只放 Antigravity 自身的产品名词。第三方/用户自装的技能名不要写进来——
     // 那是每台机器不一样的本地配置，写死在这里既泄露环境又对别人无用。
@@ -308,6 +314,8 @@ def build_engine_js(dict_map):
                     lastSeen.set(node, newVal);
                 } else {
                     lastSeen.set(node, originalVal);
+                    // 走到这里说明含英文且全部路径都没命中：记入漂移日志
+                    if (misses.size < 2000 && valNorm.length >= 3) misses.add(valNorm);
                 }
             }
         } catch (e) {}
@@ -401,6 +409,7 @@ def build_engine_js(dict_map):
 
     window.__ag_hanhua_engine__ = {
         observe: (root) => observer.observe(root, obsOpts),
+        misses: misses,
         disconnect: () => {
             stopped = true;
             try { observer.disconnect(); } catch (e) {}
