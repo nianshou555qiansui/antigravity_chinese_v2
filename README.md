@@ -4,6 +4,8 @@
 
 不改安装目录里的任何文件：以调试端口启动 Antigravity，通过 Chrome DevTools 协议把翻译脚本注入页面。想恢复英文，关掉再正常启动就行；官方更新也不会弄坏它。
 
+![中文界面](docs/screenshot.png)
+
 ![Antigravity](https://img.shields.io/badge/Antigravity-2.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey) ![Python](https://img.shields.io/badge/Python-3.x-green)
 
 ## 用法
