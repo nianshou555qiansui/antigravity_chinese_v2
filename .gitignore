@@ -1,0 +1,15 @@
+# 采集器产物：是某台机器某一次的界面快照，里面会夹带账号邮箱、
+# 会话标题等本机数据，绝不要提交。需要样例请自行运行 caiji.py 生成。
+pending.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
