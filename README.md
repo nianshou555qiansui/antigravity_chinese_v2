@@ -82,3 +82,7 @@ dicts/           字典（common.json + ui_v2.json，约 1100 条）
 ## 许可证
 
 [MIT](LICENSE)。
+
+## 讨论
+
+在 [LINUX DO](https://linux.do) 社区发布与讨论，欢迎来帖子里反馈漏翻词条。
