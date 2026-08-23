@@ -22,10 +22,11 @@ Antigravity，连 Chrome DevTools 协议（CDP）把一段 MutationObserver 翻�
 ## 常用命令
 
 ```bash
-python hanhua_v2.py                      # 自动探测 + 启动 + 注入（qidong.bat 就是调它）
+python hanhua_v2.py                      # 自动探测 + 启动 + 注入（qidong.bat / qidong_mac.sh 就是调它）
 python hanhua_v2.py --no-launch          # 只注入到已带调试端口运行的实例（开发时最常用）
 python hanhua_v2.py --watch 0            # 关掉守护，注入完立刻退出
 python hanhua_v2.py --install-dir "D:\Antigravity" --port 9333
+python hanhua_v2.py --install-dir "/Applications/Antigravity.app"
 python caiji.py                          # 抓当前页面未翻译英文 → pending.json
 ```
 
@@ -49,8 +50,10 @@ hanhua_v2.py     主脚本：加载字典 → 生成引擎 JS → 启动 Antigra
   ├ wait_for_debug_port() 轮询 /json 找主界面页
   └ cdp_inject()        等就绪 → 注册 document-start 脚本 → 注入 → 守护补注
 caiji.py         界面文本采集器（CDP 抓页面英文 → pending.json；--misses 拉取引擎未命中日志 → misses.json）
-qidong.bat       一键启动器（taskkill → 调 hanhua_v2.py）
-dicts/*.json     字典，格式 {"英文原文": "中文译文"}
+qidong.bat           Windows 一键启动器（taskkill → 调 hanhua_v2.py）
+qidong_mac.sh        macOS 一键启动器（killall → 调 hanhua_v2.py）
+qidong_mac.command   macOS 双击入口
+dicts/*.json         字典，格式 {"英文原文": "中文译文"}
 ```
 
 **注意 `build_engine_js()` 的返回值是字符串**：整个翻译引擎（约 300 行 JS）以 Python 三引号

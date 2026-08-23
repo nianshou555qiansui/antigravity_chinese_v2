@@ -21,14 +21,41 @@ import http.client
 
 # ★★★ 配置 ★★★
 DEFAULT_PORT = 9333
+# Clash / 系统代理会劫持 127.0.0.1 的 CDP HTTP/WebSocket，必须直连
+_LOCAL_NO_PROXY = "127.0.0.1,localhost,::1"
+
+
+def _bypass_proxy_for_local_cdp():
+    """本机 CDP 走直连，避免 HTTP(S)_PROXY 把 9333 打到代理。"""
+    existing = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    parts = [p.strip() for p in existing.split(",") if p.strip()]
+    for host in _LOCAL_NO_PROXY.split(","):
+        if host not in parts:
+            parts.append(host)
+    merged = ",".join(parts)
+    os.environ["NO_PROXY"] = merged
+    os.environ["no_proxy"] = merged
+
+
+def _log_proxy():
+    http_p = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+    https_p = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+    if http_p or https_p:
+        print(f"[代理] HTTP_PROXY={http_p} HTTPS_PROXY={https_p}")
+        print("[代理] 本机 CDP 已加入 NO_PROXY，不走代理")
 
 
 def candidate_paths():
     """候选安装路径（按优先级）。
 
-    用户级安装目录必须从 %LOCALAPPDATA% 取，不能硬编码 C:\\Users\\——
+    Windows 用户级安装目录必须从 %LOCALAPPDATA% 取，不能硬编码 C:\\Users\\——
     用户配置文件目录不在 C 盘时（企业环境、多盘位机器）硬编码会直接找不到。
     """
+    if sys.platform == 'darwin':
+        return [
+            '/Applications/Antigravity.app/Contents/MacOS/Antigravity',
+            os.path.expanduser('~/Applications/Antigravity.app/Contents/MacOS/Antigravity'),
+        ]
     local = os.environ.get('LOCALAPPDATA') or os.path.expanduser(r'~\AppData\Local')
     return [
         os.path.join(local, 'Programs', 'antigravity', 'Antigravity.exe'),
@@ -422,14 +449,19 @@ def build_engine_js(dict_map):
 
 
 def find_antigravity_exe(install_dir=None):
-    """定位 Antigravity.exe，返回路径或 None"""
+    """定位 Antigravity 可执行文件，返回路径或 None"""
     if install_dir:
         cand = install_dir
-        if cand.endswith('Antigravity.exe'):
-            return cand if os.path.exists(cand) else None
-        exe = os.path.join(cand, 'Antigravity.exe')
-        if os.path.exists(exe):
-            return exe
+        if os.path.isfile(cand):
+            return cand
+        for sub in [
+            'Contents/MacOS/Antigravity',
+            'Antigravity',
+            'Antigravity.exe',
+        ]:
+            exe = os.path.join(cand, sub)
+            if os.path.exists(exe):
+                return exe
         return None
     for cand in candidate_paths():
         if os.path.exists(cand):
@@ -572,11 +604,17 @@ def launch_antigravity(exe, port):
     """启动 Antigravity（带调试端口），返回进程句柄"""
     print(f"[启动] {exe} --remote-debugging-port={port}")
     try:
+        kwargs = {
+            'stdout': subprocess.DEVNULL,
+            'stderr': subprocess.DEVNULL,
+        }
+        if sys.platform == 'win32':
+            kwargs['creationflags'] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs['start_new_session'] = True
         return subprocess.Popen(
             [exe, f"--remote-debugging-port={port}"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            **kwargs
         )
     except Exception as e:
         print(f"[错误] 启动失败: {e}")
@@ -590,15 +628,23 @@ def is_antigravity_running():
     会静默开出第二个重复窗口——用户原来的窗口保持英文，看起来就是「脚本跑了
     没效果」。启动前先查进程，把这种情况变成一条可操作的即时错误。
 
-    输出用字节匹配：tasklist 在中文 Windows 上输出 GBK，text=True 按 UTF-8
+    Windows 输出用字节匹配：tasklist 在中文 Windows 上输出 GBK，text=True 按 UTF-8
     解码会崩掉 reader 线程，探测静默失败。
     """
     try:
-        out = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq Antigravity.exe"],
-            capture_output=True, timeout=5,
-        ).stdout or b""
-        return b"antigravity.exe" in out.lower()
+        if sys.platform == 'win32':
+            out = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq Antigravity.exe"],
+                capture_output=True, timeout=5,
+            ).stdout or b""
+            return b"antigravity.exe" in out.lower()
+        if sys.platform == 'darwin':
+            # -x 只匹配主进程名，避免 -f 扫到启动器自己的命令行
+            return subprocess.run(
+                ["pgrep", "-x", "Antigravity"],
+                capture_output=True, timeout=5,
+            ).returncode == 0
+        return False
     except Exception:
         return False  # 探测失败不拦路，维持旧行为
 
@@ -614,6 +660,8 @@ def main():
     args = parser.parse_args()
 
     print("=== Antigravity 2.0 运行时汉化工具（CDP 注入） ===")
+    _bypass_proxy_for_local_cdp()
+    _log_proxy()
 
     # 1. 加载字典
     dict_map = load_dictionary()
@@ -626,7 +674,7 @@ def main():
     exe = find_antigravity_exe(args.install_dir)
     if not args.no_launch:
         if not exe:
-            print("[错误] 未找到 Antigravity.exe。请用 --install-dir 指定安装目录。")
+            print("[错误] 未找到 Antigravity。请用 --install-dir 指定安装目录或 .app。")
             sys.exit(1)
         existing = wait_for_debug_port(args.port, timeout=3)
         if existing:
@@ -634,7 +682,10 @@ def main():
         elif is_antigravity_running():
             print(f"[错误] Antigravity 已在运行，但调试端口 {args.port} 上没有实例。")
             print("       此时直接启动只会多开一个重复窗口（原窗口仍是英文）。")
-            print("       请先关闭它再运行本脚本（qidong.bat 会自动关闭旧实例），")
+            if sys.platform == "darwin":
+                print("       请先关闭它再运行（qidong_mac.sh 会自动关闭旧实例），")
+            else:
+                print("       请先关闭它再运行本脚本（qidong.bat 会自动关闭旧实例），")
             print("       或用 --port 指定它实际开放的调试端口。")
             sys.exit(1)
         elif launch_antigravity(exe, args.port) is None:
