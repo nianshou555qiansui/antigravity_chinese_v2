@@ -6,23 +6,23 @@
 
 ![中文界面](docs/screenshot.png)
 
-![Antigravity](https://img.shields.io/badge/Antigravity-2.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey) ![Python](https://img.shields.io/badge/Python-3.x-green)
+![Antigravity](https://img.shields.io/badge/Antigravity-2.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey) ![Python](https://img.shields.io/badge/Python-3.x-green)
 
 ## 用法
 
-前置：Windows、Antigravity 2.0、Python 3 和 websockets。
+前置：Windows 或 macOS、Antigravity 2.0、Python 3 和 websockets。
 
 ```bash
 pip install websockets
 ```
 
-最省事的方式是双击 `qidong.bat`：关掉正在运行的 Antigravity（未保存的编辑会丢），带调试端口重启，等界面加载完注入，再守护 30 秒防止页面重载把脚本冲掉。看到 `[3/3] Done!` 就完成了。
+Windows 双击 `qidong.bat`，macOS 双击 `qidong_mac.command` 或在终端跑 `./qidong_mac.sh`：关掉正在运行的 Antigravity（未保存的编辑会丢），带调试端口重启，等界面加载完注入，再守护 30 秒防止页面重载把脚本冲掉。看到 `[3/3] Done!` 就完成了。
 
 也可以命令行：
 
 ```bash
 python hanhua_v2.py                                # 自动探测安装路径 + 启动 + 注入
-python hanhua_v2.py --install-dir "D:\Antigravity" # 找不到 Antigravity.exe 时手动指定
+python hanhua_v2.py --install-dir "D:\Antigravity" # 找不到可执行文件时手动指定（macOS 可指向 .app）
 python hanhua_v2.py --port 9334                    # 默认端口 9333 被占用时
 python hanhua_v2.py --no-launch                    # 只注入已带调试端口的实例
 python hanhua_v2.py --watch 60                     # 守护秒数，0 为不守护，默认 30
@@ -58,7 +58,7 @@ Agent 统一译作智能体。下拉菜单和悬停提示只在展开或悬停�
 
 ## 限制
 
-- 仅 Windows
+- Windows / macOS（Linux 未测）
 - 只注入主界面窗口；开多个窗口时其余的不翻
 - 每次启动都要重新注入
 - 需要能开 DevTools 调试端口，部分企业安全策略会拦截
@@ -67,10 +67,12 @@ Agent 统一译作智能体。下拉菜单和悬停提示只在展开或悬停�
 ## 项目结构
 
 ```
-hanhua_v2.py     主脚本：加载字典、生成引擎、启动、注入、守护
-caiji.py         采集当前页面未翻译的英文
-qidong.bat       Windows 一键启动器
-dicts/           字典（common.json + ui_v2.json，约 1100 条）
+hanhua_v2.py         主脚本：加载字典、生成引擎、启动、注入、守护
+caiji.py             采集当前页面未翻译的英文
+qidong.bat           Windows 一键启动器
+qidong_mac.sh        macOS 一键启动器
+qidong_mac.command   macOS 双击入口（调 qidong_mac.sh）
+dicts/               字典（common.json + ui_v2.json，约 1100 条）
 ```
 
 实现细节和踩坑记录在 [CLAUDE.md](CLAUDE.md)。
