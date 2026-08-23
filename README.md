@@ -18,6 +18,8 @@ pip install websockets
 
 Windows 双击 `qidong.bat`，macOS 双击 `qidong_mac.command` 或在终端跑 `./qidong_mac.sh`：关掉正在运行的 Antigravity（未保存的编辑会丢），带调试端口重启，等界面加载完注入，再守护 30 秒防止页面重载把脚本冲掉。看到 `[3/3] Done!` 就完成了。
 
+macOS 从 GitHub 下 ZIP 解压的话，双击 `.command` 可能被系统拦（文件带隔离属性），改在终端里跑 `./qidong_mac.sh` 就行；git clone 下来的不受影响。
+
 也可以命令行：
 
 ```bash

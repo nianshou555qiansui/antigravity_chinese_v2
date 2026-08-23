@@ -60,6 +60,11 @@ dicts/*.json         字典，格式 {"英文原文": "中文译文"}
 字符串形式存在于 `hanhua_v2.py` 里，靠 `DICT_PLACEHOLDER` 占位替换注入字典。改 JS 时
 Python 的字符串转义层会介入，见下文「转义陷阱」。
 
+**平台分支**：`candidate_paths()` / `launch_antigravity()` / `is_antigravity_running()` 三处按
+`sys.platform` 分 Windows / macOS 两支，加平台相关逻辑时三处要同步改。macOS 支持来自
+PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用「伪造 `sys.platform` + 假 `.app`
+目录树」验证纯逻辑，Windows 侧则必须真机跑完整流程确认无回归。
+
 ### 注入时机 —— 冷启动能否成功的关键
 
 **端口开放 ≠ 界面就绪。** 冷启动时 CDP 端口比 SPA 挂载早得多，此时页面 `title` 还是空的，
@@ -168,6 +173,8 @@ Python 的字符串转义层会介入，见下文「转义陷阱」。
 
 同理，任何「当前机器上有什么」的信息（已装技能名、用户目录、账号）都不该硬编码进源码。
 安装路径必须从 `%LOCALAPPDATA%` 取，不能写死 `C:\Users\...`。
+打印环境变量前先脱敏：`HTTP_PROXY` 这类地址可能内嵌 `user:pass@`，用户把日志贴进
+issue 就泄露了，`_mask_proxy()` 就是干这个的。
 
 ## 转义陷阱（这个项目最容易踩的坑）
 
@@ -200,6 +207,9 @@ Python 的字符串转义层会介入，见下文「转义陷阱」。
   同理别用 `timeout /t`（stdin 被重定向时直接报错退出），延时统一用 `ping -n N 127.0.0.1`。
 - **在 Git Bash 里测 Windows 命令要加 `MSYS_NO_PATHCONV=1`**，否则 `taskkill /f` 的 `/f`
   会被转成路径 `F:/` 而报「无效参数」。用户双击 .bat 时不受影响。
+- **本机开了 HTTP 代理（Clash 等）会让 CDP 连不上**：`urllib` 会把 `http://127.0.0.1:9333`
+  的请求打进代理。`main()` 开头的 `_bypass_proxy_for_local_cdp()` 已把本机地址并入
+  `NO_PROXY`，新增代码别在它之前对调试端口发请求。
 - **不要轻信自己写的扫描脚本。** 这个项目里多次出现「扫描说没问题、用户说有问题」，
   每次都是扫描器自身有 bug。以用户看到的界面为准。
 
