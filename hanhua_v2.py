@@ -37,11 +37,18 @@ def _bypass_proxy_for_local_cdp():
     os.environ["no_proxy"] = merged
 
 
+def _mask_proxy(url):
+    """代理地址可能内嵌 user:pass@，日志常被贴到 issue，凭据打码。"""
+    if not url:
+        return None
+    return re.sub(r"//([^:/@\s]+):([^@\s]+)@", r"//\1:***@", url)
+
+
 def _log_proxy():
     http_p = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
     https_p = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
     if http_p or https_p:
-        print(f"[代理] HTTP_PROXY={http_p} HTTPS_PROXY={https_p}")
+        print(f"[代理] HTTP_PROXY={_mask_proxy(http_p)} HTTPS_PROXY={_mask_proxy(https_p)}")
         print("[代理] 本机 CDP 已加入 NO_PROXY，不走代理")
 
 
