@@ -125,6 +125,8 @@
   "Bug Report": "问题报告",
   "Build": "构建",
   "Build With Google Plugins": "Google 插件",
+  "Build with Antigravity Plugins": "使用 Antigravity 插件构建",
+  "Build with Google": "使用 Google 构建",
   "Bullet List": "项目符号列表",
   "CRLF": "CRLF",
   "Call Stack": "调用栈",
@@ -627,6 +629,7 @@
   "No folders added yet.": "尚未添加文件夹。",
   "No messages yet": "暂无消息",
   "No notifications": "暂无通知",
+  "No plugins available.": "没有可用的插件。",
   "No projects yet": "暂无项目",
   "No results": "无结果",
   "No rules added yet.": "尚未添加规则。",
@@ -707,7 +710,10 @@
   "Please enter a valid email": "请输入有效的邮箱",
   "Please enter a valid value": "请输入有效值",
   "Please list the steps to reproduce the issue": "请列出复现此问题的步骤",
+  "Plugin Operation Error:": "插件操作错误：",
   "Plugins": "插件",
+  "Plugins are packaged collections of skills and MCPs to help the Agent": "插件是技能和 MCP 的打包集合，可帮助智能体",
+  "Plugins are packaged collections of skills and MCPs to help the Agent in": "插件是技能和 MCP 的打包集合，可帮助",
   "PowerShell": "PowerShell",
   "Preferences": "偏好设置",
   "Premium": "高级版",
@@ -770,6 +776,7 @@
   "Refresh": "刷新",
   "Refresh MCP servers": "刷新 MCP 服务器",
   "Refresh quota and credits data": "刷新配额和积分数据",
+  "Refreshing...": "刷新中...",
   "Refund": "退款",
   "Regenerate": "重新生成",
   "Region": "地区",
@@ -1117,5 +1124,6 @@
   "e.g., https://example.com": "例如：https://example.com",
   "e.g., npm test": "例如：npm test",
   "managed by your organization": "由你的组织管理",
-  "while running": "运行时"
+  "while running": "运行时",
+  "work with Google developer products. You can always change your choices in Settings.": "使用 Google 开发者产品。你可以随时在设置中更改选择。"
 }

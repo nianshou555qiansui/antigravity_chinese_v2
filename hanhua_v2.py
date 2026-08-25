@@ -259,8 +259,12 @@ def build_engine_js(dict_map):
     const REGEX_RULES = [
         [/^You have used some of your weekly limit, it will fully refresh in (.+)[.]$/,
          (m, a) => '你已使用部分每周限额，将在 ' + cnDuration(a) + ' 后完全刷新。'],
-        [/^You have used some of your five hour limit, it will fully refresh in (.+)[.]$/,
-         (m, a) => '你已使用部分五小时限额，将在 ' + cnDuration(a) + ' 后完全刷新。'],
+        // 官方把 five hour 改成了 5-hour（2026-08 发现失配），两种写法都得容纳
+        [/^You have used some of your (5-hour|five hour) limit, it will fully refresh in (.+)[.]$/,
+         (m, a, b) => '你已使用部分五小时限额，将在 ' + cnDuration(b) + ' 后完全刷新。'],
+        // 插件页描述是 React 多子节点："...help the Agent" / "in Antigravity " / "work with..."
+        // 是三个独立文本节点，整句正则匹配不到，只能拆开：两个片段进字典，这条管中间的产品名
+        [/^in (Antigravity)$/, (m, a) => '（在 ' + a + ' 中）'],
         [/^Send feedback as (.+)$/, (m, a) => '以 ' + a + ' 身份发送反馈'],
         // 模型名会随版本变，写进字典等于每次官方换模型就失效，必须走正则
         [/^Select model, current: (.+)$/, (m, a) => '选择模型，当前：' + a],
