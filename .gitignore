@@ -16,5 +16,6 @@ venv/
 # 编辑器 / 系统
 .vscode/
 .idea/
+.zcode/
 .DS_Store
 Thumbs.db
