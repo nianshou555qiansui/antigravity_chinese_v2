@@ -3,6 +3,10 @@
 pending.json
 misses.json
 
+# 守护进程的运行时产物（日志含本机启动记录、锁含 PID）
+shouhu.log
+shouhu.lock
+
 # Python
 __pycache__/
 *.py[cod]

@@ -647,6 +647,8 @@ def is_antigravity_running():
             out = subprocess.run(
                 ["tasklist", "/FI", "IMAGENAME eq Antigravity.exe"],
                 capture_output=True, timeout=5,
+                # pythonw 无控制台，不带此标志每 2 秒轮询就弹一个黑窗（守护进程场景）
+                creationflags=subprocess.CREATE_NO_WINDOW,
             ).stdout or b""
             return b"antigravity.exe" in out.lower()
         if sys.platform == 'darwin':
@@ -668,7 +670,16 @@ def main():
                         help="不启动 Antigravity，只连已有调试端口注入（需已带端口启动）")
     parser.add_argument("--watch", type=int, default=30,
                         help="注入后守护多少秒（页面重载会自动补注，0=不守护，默认 30）")
+    parser.add_argument("--autostart", choices=["on", "off", "status"],
+                        help="自动注入开关：登录自启守护进程，任何方式启动反重力都自动注入")
     args = parser.parse_args()
+
+    if args.autostart:
+        # 委托给 shouhu.py（启动项指向它，开关逻辑也放在它那边）
+        import shouhu
+        {"on": shouhu.autostart_on, "off": shouhu.autostart_off,
+         "status": shouhu.autostart_status}[args.autostart]()
+        return
 
     print("=== Antigravity 2.0 运行时汉化工具（CDP 注入） ===")
     _bypass_proxy_for_local_cdp()

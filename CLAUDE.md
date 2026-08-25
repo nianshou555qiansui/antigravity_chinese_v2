@@ -27,6 +27,8 @@ python hanhua_v2.py --no-launch          # 只注入到已带调试端口运行�
 python hanhua_v2.py --watch 0            # 关掉守护，注入完立刻退出
 python hanhua_v2.py --install-dir "D:\Antigravity" --port 9333
 python hanhua_v2.py --install-dir "/Applications/Antigravity.app"
+python hanhua_v2.py --autostart on|off|status  # 自动注入开关（守护 shouhu.py，仅 Windows）
+python shouhu.py --verbose                     # 前台跑守护，实时看日志
 python caiji.py                          # 抓当前页面未翻译英文 → pending.json
 ```
 
@@ -50,6 +52,7 @@ hanhua_v2.py     主脚本：加载字典 → 生成引擎 JS → 启动 Antigra
   ├ wait_for_debug_port() 轮询 /json 找主界面页
   └ cdp_inject()        等就绪 → 注册 document-start 脚本 → 注入 → 守护补注
 caiji.py         界面文本采集器（CDP 抓页面英文 → pending.json；--misses 拉取引擎未命中日志 → misses.json）
+shouhu.py        可选守护进程（仅 Windows）：登录自启，检测启动→带端口重启→注入
 qidong.bat           Windows 一键启动器（taskkill → 调 hanhua_v2.py）
 qidong_mac.sh        macOS 一键启动器（killall → 调 hanhua_v2.py）
 qidong_mac.command   macOS 双击入口
@@ -78,6 +81,28 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
    这一步才是真正的保险
 
 `main()` 外层还包了 3 次重试：早期 page target 可能在加载途中被丢弃，WebSocket 会直接断开。
+
+### 守护进程（shouhu.py，可选，仅 Windows）
+
+`--autostart on` 在 shell:startup 建 .lnk → pythonw 无窗口常驻，每 0.3 秒一轮：
+
+- 端口开着：探 `window.__ag_hanhua_engine__`，不在就现编译字典注入（watch=8s）
+- 端口开着但页面没就绪（title 还是 Loading）：等，不杀
+- 端口没开但进程在（正常双击启动）：taskkill → 等进程真消失（~0.3s）→ 带端口重启
+
+用户实机踩过的坑（别再踩）：
+
+- pythonw 无控制台，所有子进程（tasklist/taskkill/powershell）必须带
+  `CREATE_NO_WINDOW`，否则 0.3 秒一轮的轮询变成无限闪黑窗
+- 轮询的进程检查用 ctypes WinAPI 直查（`EnumProcesses`，~1ms），
+  别换回 tasklist（实测一次 286ms，高频轮询扛不住）
+- 注入路径只复用 `cdp_inject()`，守护不得另写一套
+- 安全阀只累计**失败**的杀重启（注入成功即清零）——数总次数会把正常反复
+  开关应用的用户误判成死循环，守护自己退出（表现为「不汉化了」）
+- KILL_GRACE 冷却 15 秒：曾设 90 秒，用户重开应用要干等到期才被处理
+  （表现为「要等一分钟」）
+- taskkill /F 是硬杀走不到 finally，lock 会残留 → 启动时按 PID 存活检查接管
+- shouhu.log / shouhu.lock 都在 .gitignore
 
 ### 翻译引擎
 

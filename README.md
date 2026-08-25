@@ -32,6 +32,19 @@ python hanhua_v2.py --watch 60                     # 守护秒数，0 为不守�
 
 注入只存在于内存里，每次启动 Antigravity 都要重跑。偶尔注入成功了界面还是英文，多半是页面后来又重载过：等守护期结束，或界面稳定后跑一次 `python hanhua_v2.py --no-launch`。
 
+也可以开自动注入，之后就不用管了：
+
+```bash
+python hanhua_v2.py --autostart on      # 开启（建登录自启项，下次登录生效）
+python shouhu.py --verbose              # 或先前台跑一次看效果，Ctrl+C 退出
+python hanhua_v2.py --autostart status  # 看状态
+python hanhua_v2.py --autostart off     # 关闭
+```
+
+后台守护每 0.3 秒检查一次：带调试端口运行的，引擎不在就补注入；被正常方式打开（双击图标、开始菜单）的，先关掉再带端口重启再注入，未保存的编辑会丢，和 `qidong.bat` 一样。守护日志在同目录 `shouhu.log`。仅 Windows。
+
+注意：自动注入的响应速度还没优化好。通常双击后几秒内能完成，但赶上冷却期可能要等十几秒。想立刻看到中文，直接双击 `qidong.bat` 更快。
+
 ## 原理
 
 `hanhua_v2.py` 带着调试端口启动 Antigravity，轮询 `http://127.0.0.1:9333/json` 找到主界面页，等页面真正就绪后注入一段带字典的 MutationObserver 脚本。脚本监听 DOM 变化实时替换文案；代码块、终端、编辑器、输入框、会话列表都在禁区里，不会被翻译。实测内存增加约 0.6 MB。
@@ -60,9 +73,9 @@ Agent 统一译作智能体。下拉菜单和悬停提示只在展开或悬停�
 
 ## 限制
 
-- Windows / macOS（Linux 未测）
+- Windows / macOS（Linux 未测；自动注入仅 Windows）
 - 只注入主界面窗口；开多个窗口时其余的不翻
-- 每次启动都要重新注入
+- 不开自动注入时，每次启动都要手动重跑脚本
 - 需要能开 DevTools 调试端口，部分企业安全策略会拦截
 - 调试端口在 Antigravity 运行期间一直开放，本机任何进程都能借它读到页面内容（包括代码和会话）。脚本注入完会断开，但端口随进程存活，介意就用完关掉、不带端口重启（界面会回到英文）
 
