@@ -69,6 +69,8 @@ Agent 统一译作智能体。下拉菜单和悬停提示只在展开或悬停�
 
 官方更新后想知道哪些词条失效了：跑 `python caiji.py --misses`，它会列出注入以来界面上出现过但没翻出来的英文，写入 `misses.json`（同样可能含本机数据，勿提交）。
 
+`caiji.py` 只覆盖你点到的那几页。想一次拿全整个界面的文案（包括从没打开过的设置页），可以直接从界面的 JS bundle 里抽：带调试端口启动后下载 `https://127.0.0.1:9333/main.js`（约 10 MB，界面全部文案都在里面），抽出字符串字面量与 `dicts/` 做双向 diff，就能同时看出「新增文案」和「官方改写的原文」。过滤规则与踩坑见 [CLAUDE.md](CLAUDE.md) 的「bundle 审计法」。
+
 `pending.json` 是你本机的界面快照，可能夹带账号邮箱，已在 `.gitignore` 里，别提交。
 
 ## 限制
@@ -87,7 +89,7 @@ caiji.py             采集当前页面未翻译的英文
 qidong.bat           Windows 一键启动器
 qidong_mac.sh        macOS 一键启动器
 qidong_mac.command   macOS 双击入口（调 qidong_mac.sh）
-dicts/               字典（common.json + ui_v2.json，约 1100 条）
+dicts/               字典（common.json + ui_v2.json，约 2400 条）
 ```
 
 实现细节和踩坑记录在 [CLAUDE.md](CLAUDE.md)。

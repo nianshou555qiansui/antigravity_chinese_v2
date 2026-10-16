@@ -30,6 +30,7 @@ python hanhua_v2.py --install-dir "/Applications/Antigravity.app"
 python hanhua_v2.py --autostart on|off|status  # 自动注入开关（守护 shouhu.py，仅 Windows）
 python shouhu.py --verbose                     # 前台跑守护，实时看日志
 python caiji.py                          # 抓当前页面未翻译英文 → pending.json
+python caiji.py --misses                 # 拉引擎未命中日志 → misses.json（需已注入）
 ```
 
 改完代码后的自查（没有测试框架，靠这几条）：
@@ -57,6 +58,9 @@ qidong.bat           Windows 一键启动器（taskkill → 调 hanhua_v2.py）
 qidong_mac.sh        macOS 一键启动器（killall → 调 hanhua_v2.py）
 qidong_mac.command   macOS 双击入口
 dicts/*.json         字典，格式 {"英文原文": "中文译文"}
+README.md            面向用户的门面文档（用法、原理、限制）；改 CLI 参数或用户可见行为时同步
+docs/screenshot.png  界面截图，README 引用
+requirements.txt     依赖清单（只有 websockets）
 ```
 
 **注意 `build_engine_js()` 的返回值是字符串**：整个翻译引擎（约 300 行 JS）以 Python 三引号
@@ -67,6 +71,21 @@ Python 的字符串转义层会介入，见下文「转义陷阱」。
 `sys.platform` 分 Windows / macOS 两支，加平台相关逻辑时三处要同步改。macOS 支持来自
 PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用「伪造 `sys.platform` + 假 `.app`
 目录树」验证纯逻辑，Windows 侧则必须真机跑完整流程确认无回归。
+
+### 启动前的多实例守卫
+
+**Antigravity 没有单实例锁**（实测可并存多窗口）。若用户已经用正常方式开着 Antigravity，
+脚本再带端口启一个，只会静默多出一个重复窗口——原窗口保持英文，用户看到的就是
+「脚本跑了没效果」，而且极难自查。`main()` 因此在启动前先 `wait_for_debug_port(timeout=3)`
+探端口：端口有页面就复用；端口没有但 `is_antigravity_running()` 为真，就**直接报错退出**
+并提示先关旧实例或用 `--port` 指它实际开放的端口。别把这个检查当成多余的礼貌——
+去掉它就会退回上面那种静默失败。
+
+### 注入失败的显式上报
+
+`Runtime.evaluate` 的 JS 异常**不在**顶层 `error` 字段里，而在 `result.exceptionDetails`。
+`main()` 必须显式查它：不查的话引擎脚本抛错时脚本照样打印「[成功]」，制造
+「注入成功但界面全英文」的假象，把排查引向错误方向（见「排查经验」第一条）。
 
 ### 注入时机 —— 冷启动能否成功的关键
 
@@ -121,7 +140,8 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
 **性能**：`lastSeen` WeakMap 记住每个文本节点上次处理过的值，没变就跳过。这是关键优化——
 没有它，每 3 秒的全量重扫都要对每个节点做一遍昂贵匹配。
 
-实测占用（1125 条词条、667 个 DOM 元素）：JS 堆净增 586 KB（≈ Antigravity 总内存 640 MB 的 0.09%）；
+实测占用（2026-08 在约 1150 条词条、667 个 DOM 元素下测得；字典 2026-10 已增至约 2400 条，
+下列数字是最低值，改动字典后应重测）：JS 堆净增 586 KB（≈ Antigravity 总内存 640 MB 的 0.09%）；
 全量重扫 0.4~0.7 ms；11 秒采样期内主线程长任务 0 次。
 **量堆增量别直接比前后差值**——应用自身堆在 52~55 MB 间波动，几百 KB 会被噪声淹没；
 正确做法是在页面里再构造一份等价结构、前后立刻取样取差值。
@@ -165,7 +185,7 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
 ## 字典约定
 
 `dicts/*.json` 运行时全部合并成一个 map。`common.json` 放通用 UI 词（23 条），
-`ui_v2.json` 放 2.0 界面文案（约 1100 条）。**两个文件不得有重复 key**——
+`ui_v2.json` 放 2.0 界面文案（约 2400 条，2026-10 按 bundle 审计法从 2.23.1 补齐）。**两个文件不得有重复 key**——
 同一条翻译存在两处，改一处另一处就会漂移。`common.json` 是通用词的唯一归属地。
 
 新增翻译只需在 `dicts/` 下加 JSON，不用改代码。
@@ -174,6 +194,37 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
 `misses`（内存 Set，上限 2000，重复注入即重置；只记文本节点不记属性——属性
 不查禁区，会话标题这类用户内容会混进来）。`python caiji.py --misses` 拉取，
 产物 `misses.json` 已进 .gitignore。
+
+**重新注入后 `misses` 会有假阳性**：新引擎带一份空的 `lastSeen`，首次全量扫描会撞上
+页面上**上一次注入留下的中文译文**。这些译文若保留拉丁字母（产品名、模型名，如
+`Gemini 4 Argon 现已向付费 Pro 套餐订阅者开放。`）就过不了「无英文字母」的短路，
+一路走到最后被记成未命中。排查时先滤掉含中文的条目——它们不是缺口。
+（`misses` 里含中文 = 已翻过；真正的缺口是纯英文条目。）
+
+**官方更新后系统性地找漏翻（bundle 审计法）**：逐页跑 `caiji.py` 只覆盖你点到的那几页，
+漏掉的页面永远不会暴露。要一次拿全，直接从 SPA 的 JS bundle 里挖——界面全部文案都在里面。
+
+1. 带调试端口启动后，在页面里 `performance.getEntriesByType('resource')` 列出加载的 .js，
+   只有两个：`https://127.0.0.1:<端口>/main.js`（约 10 MB，Closure 编译产物，文案全在这里）
+   和 `prism_bundle.js`（只是语法高亮）。用 `curl -sk --noproxy '*'` 下载。
+2. **比对前先把 bundle 里的弯引号归一成半角。** 字典 key 在加载时已被 `normalize_text()`
+   归一，而 bundle 里 `Don't` 用的是 U+2019——不归一，711 条长 key 只匹配上 326 条（46%），
+   会误判成「大批词条失效」。用 1:1 字符映射替换，字节偏移不变，可继续按偏移定位。
+3. 抽字符串字面量，与字典做**双向 diff**：
+   - 「字典有、bundle 没有」= 官方改写了原文（2026-10 那次 470 条，其中 13 条高相似度）。
+     用词重叠预筛 + `difflib` 相似度 ≥ 0.85 能自动配对回旧译文，剩下的才人工看。
+     相似度阈值别放太低——0.72 档开始大量误配（`Clear conversation` → `New conversation`）。
+   - 「bundle 有、字典没有」= 新增文案。
+4. **噪声过滤是成败关键。** bundle 里绝大多数字面量不是界面文案，按特征剔除：
+   无大写字母（Tailwind/CSS 类名）、含 `[0-9],[0-9]` 或数字占比 >20%（SVG 路径）、
+   出现 node/edge/port/graph/layout（ELK 图布局库的选项说明）、
+   `must be used within` / `A generic type` / `Invalid quantifier`（React/Redux/TS/正则解析器的
+   开发期报错）、全大写 `[A-Z0-9_]+`（枚举常量）、`xxx.yyy` 或 `a/b`（内部设置项与命令 ID）。
+5. **最可靠的精度信号是邻近度**：真界面文案必然紧邻字典里已有的词条，库文案自成区域。
+   按「离最近字典词条的字节距离」排序，距离个位数的基本全是真文案。
+6. **过滤字符集别收太紧**：`@`（`Ask anything, @ to mention`）、`!`、`&`
+   （`Terms of Service & Data Use`）都在真实文案里。第一轮把 `@` 放进排除集，
+   整类文案被静默丢弃，`Ask anything, @ to mention` 就是这么漏掉的。
 
 **三条铁律**：
 
@@ -240,8 +291,15 @@ issue 就泄露了，`_mask_proxy()` 就是干这个的。
 - **本机开了 HTTP 代理（Clash 等）会让 CDP 连不上**：`urllib` 会把 `http://127.0.0.1:9333`
   的请求打进代理。`main()` 开头的 `_bypass_proxy_for_local_cdp()` 已把本机地址并入
   `NO_PROXY`，新增代码别在它之前对调试端口发请求。
+- **Windows 上 `tasklist` 输出必须按字节匹配，别用 `text=True`。** 中文 Windows 的 tasklist
+  输出是 GBK，`text=True` 按 UTF-8 解码会崩掉 reader 线程，探测**静默**失败（返回 False），
+  表现为「明明在跑却说不存在」。`is_antigravity_running()` 用 `capture_output` 拿 bytes 再
+  `.lower()` 找 `b"antigravity.exe"`。同理该子进程要带 `CREATE_NO_WINDOW`——主脚本里
+  只调一次无所谓，但这段逻辑被守护进程复用，无控制台环境下会闪黑窗。
 - **不要轻信自己写的扫描脚本。** 这个项目里多次出现「扫描说没问题、用户说有问题」，
   每次都是扫描器自身有 bug。以用户看到的界面为准。
+- **改完 CLI 参数或用户可见行为，记得同步 `README.md`**——它是这个项目对外的唯一门面，
+  用法、原理、限制三段都直接引用脚本行为，漂移了读者会照着过期的说明操作。
 
 ## 已知取舍
 

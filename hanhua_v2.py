@@ -273,6 +273,20 @@ def build_engine_js(dict_map):
         // 第三行 "On empty prompt..." 不需要规则——字典里已有完整句子，smartReplace 覆盖
         [/^(.+?) Sends immediately$/, (m, a) => a + ' 立即发送'],
         [/^(.+?) Queues after the turn$/, (m, a) => a + ' 排队等待当前轮次结束后发送'],
+        // 归档/进行中对话的计数标签（"1 archived conversation" / "2 active conversations"）：
+        // 数量可变、单复数由官方模板决定，写死进字典必然漏。复合句（"N active and M archived"）
+        // 单独一条兜住——单数规则带 $ 锚定，不会误吃复合句。
+        [/^([0-9]+) active conversations?$/, (m, a) => a + ' 个进行中对话'],
+        [/^([0-9]+) archived conversations?$/, (m, a) => a + ' 个已归档对话'],
+        [/^([0-9]+) active conversations? and ([0-9]+) archived conversations?$/,
+         (m, a, b) => a + ' 个进行中对话和 ' + b + ' 个已归档对话'],
+        // 项目选择器 / 权限预设选择器的 aria-label，后半段是变量
+        [/^Select project, current: (.+)$/, (m, a) => '选择项目，当前：' + a],
+        [/^Agent permissions preset selector, current: (.+)$/,
+         (m, a) => '智能体权限预设选择器，当前：' + a],
+        // 新模型上线公告：文案由服务端下发（bundle 里搜不到），模型名随官方更新变，只能按模板匹配
+        [/^(.+) is now available to paid Pro plan subscribers[.]$/,
+         (m, a) => a + ' 现已向付费 Pro 套餐订阅者开放。'],
     ];
     function applyRegexRules(text) {
         for (const [re, fn] of REGEX_RULES) {
