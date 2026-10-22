@@ -56,7 +56,7 @@ python hanhua_v2.py --autostart off     # 关闭
 漏翻的地方只需要改 JSON，不用碰代码。
 
 1. 把 Antigravity 导航到那个页面，运行 `python caiji.py`，未翻译的英文会写进 `pending.json`
-2. 翻译后按 `{"原文": "译文"}` 的格式加进 `dicts/`：`common.json` 放通用词，`ui_v2.json` 放 2.0 界面文案；同一个 key 别写进两个文件
+2. 翻译后按 `{"原文": "译文"}` 的格式加进 `dicts/`：`common.json` 放通用词，`ui_v2.json` 放 2.0 界面文案，`ui_v2_225.json` 放 2.25.25 起的增量；同一个 key 别写进两个文件
 3. `python hanhua_v2.py --no-launch` 重新注入验证
 
 写字典有三条规矩：
@@ -86,10 +86,11 @@ Agent 统一译作智能体。下拉菜单和悬停提示只在展开或悬停�
 ```
 hanhua_v2.py         主脚本：加载字典、生成引擎、启动、注入、守护
 caiji.py             采集当前页面未翻译的英文
+shouhu.py            可选守护进程（仅 Windows）：登录自启，自动检测启动并注入
 qidong.bat           Windows 一键启动器
 qidong_mac.sh        macOS 一键启动器
 qidong_mac.command   macOS 双击入口（调 qidong_mac.sh）
-dicts/               字典（common.json + ui_v2.json，约 2400 条）
+dicts/               字典（common.json + ui_v2*.json，约 2900 条）
 ```
 
 实现细节和踩坑记录在 [CLAUDE.md](CLAUDE.md)。

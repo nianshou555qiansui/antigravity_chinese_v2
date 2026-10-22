@@ -36,13 +36,20 @@ python caiji.py --misses                 # 拉引擎未命中日志 → misses.j
 改完代码后的自查（没有测试框架，靠这几条）：
 
 ```bash
-python -c "import ast,io;[ast.parse(io.open(f,encoding='utf-8').read()) for f in ['hanhua_v2.py','caiji.py']]"
-python -c "import json,io;[json.load(io.open(f,encoding='utf-8')) for f in ['dicts/common.json','dicts/ui_v2.json']]"
+python -c "import ast,io;[ast.parse(io.open(f,encoding='utf-8').read()) for f in ['hanhua_v2.py','caiji.py','shouhu.py']]"
+python -c "import json,io,os;[json.load(io.open('dicts/'+f,encoding='utf-8')) for f in os.listdir('dicts') if f.endswith('.json')]"
 # 引擎 JS 必须单独校验：它是 Python 字符串拼出来的，语法错在注入时才会暴露
-python -c "import importlib.util,io;s=importlib.util.spec_from_file_location('h','hanhua_v2.py');h=importlib.util.module_from_spec(s);s.loader.exec_module(h);io.open('/tmp/e.js','w',encoding='utf-8').write(h.build_engine_js(h.load_dictionary()))"
-node --check /tmp/e.js
+# 注意别写 '/tmp/e.js'：Windows 原生 Python 看不见 Git Bash 的 /tmp，会 FileNotFoundError
+p=$(python -c "import importlib.util,io,os,tempfile;s=importlib.util.spec_from_file_location('h','hanhua_v2.py');h=importlib.util.module_from_spec(s);s.loader.exec_module(h);p=os.path.join(tempfile.gettempdir(),'e.js');io.open(p,'w',encoding='utf-8').write(h.build_engine_js(h.load_dictionary()));print(p)")
+node --check "$p"
 python -c "b=open('qidong.bat','rb').read();assert not [x for x in b if x>127],'bat 混入非 ASCII'"
 ```
+
+> 三个入口（`hanhua_v2.main()` / `caiji.main()` / `shouhu.main()`）**都要调用
+> `_bypass_proxy_for_local_cdp()`**。websockets 16 的 `proxy` 参数默认 `True`，
+> 会读 `HTTP_PROXY` 并在 `NO_PROXY` 不含本机时把 `ws://127.0.0.1` 打进代理（实测
+> `ConnectionRefusedError`）。`http.client` 不受影响，所以症状是 `/json` 探得到、
+> 注入却连不上。
 
 ## 架构
 
@@ -63,7 +70,7 @@ docs/screenshot.png  界面截图，README 引用
 requirements.txt     依赖清单（只有 websockets）
 ```
 
-**注意 `build_engine_js()` 的返回值是字符串**：整个翻译引擎（约 300 行 JS）以 Python 三引号
+**注意 `build_engine_js()` 的返回值是字符串**：整个翻译引擎（约 360 行 JS）以 Python 三引号
 字符串形式存在于 `hanhua_v2.py` 里，靠 `DICT_PLACEHOLDER` 占位替换注入字典。改 JS 时
 Python 的字符串转义层会介入，见下文「转义陷阱」。
 
@@ -140,7 +147,7 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
 **性能**：`lastSeen` WeakMap 记住每个文本节点上次处理过的值，没变就跳过。这是关键优化——
 没有它，每 3 秒的全量重扫都要对每个节点做一遍昂贵匹配。
 
-实测占用（2026-08 在约 1150 条词条、667 个 DOM 元素下测得；字典 2026-10 已增至约 2400 条，
+实测占用（2026-08 在约 1150 条词条、667 个 DOM 元素下测得；字典 2026-10 已增至约 2900 条，
 下列数字是最低值，改动字典后应重测）：JS 堆净增 586 KB（≈ Antigravity 总内存 640 MB 的 0.09%）；
 全量重扫 0.4~0.7 ms；11 秒采样期内主线程长任务 0 次。
 **量堆增量别直接比前后差值**——应用自身堆在 52~55 MB 间波动，几百 KB 会被噪声淹没；
@@ -185,8 +192,10 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
 ## 字典约定
 
 `dicts/*.json` 运行时全部合并成一个 map。`common.json` 放通用 UI 词（23 条），
-`ui_v2.json` 放 2.0 界面文案（约 2400 条，2026-10 按 bundle 审计法从 2.23.1 补齐）。**两个文件不得有重复 key**——
+`ui_v2.json` 放 2.0 界面文案（约 2400 条，2026-10 按 bundle 审计法从 2.23.1 补齐），
+`ui_v2_225.json` 放 2.25.25 的增量（471 条，同法审计）。**所有文件之间不得有重复 key**——
 同一条翻译存在两处，改一处另一处就会漂移。`common.json` 是通用词的唯一归属地。
+按版本拆文件而不是并进 `ui_v2.json`，是为了让「哪批词条对应哪次官方更新」一眼可查。
 
 新增翻译只需在 `dicts/` 下加 JSON，不用改代码。
 
@@ -222,15 +231,31 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
    开发期报错）、全大写 `[A-Z0-9_]+`（枚举常量）、`xxx.yyy` 或 `a/b`（内部设置项与命令 ID）。
 5. **最可靠的精度信号是邻近度**：真界面文案必然紧邻字典里已有的词条，库文案自成区域。
    按「离最近字典词条的字节距离」排序，距离个位数的基本全是真文案。
-6. **过滤字符集别收太紧**：`@`（`Ask anything, @ to mention`）、`!`、`&`
+6. **2026-10（2.25.25）实测更准的信号：按 UI 属性名抓。** 界面文案在 bundle 里几乎都以
+   `{title:"…", description:"…", label:"…", tooltipText:"…", placeholder:"…"}`
+   的对象属性形式出现，库报错/调试字符串不会用这些属性名。正则
+   `(?:title|description|label|tooltipText|placeholder|…)\s*:\s*("…")`
+   抽出来的 1472 条里 745 条直接命中字典，剩下的质量远高于全量字面量。
+   两种方法互补：属性名法精度高、覆盖面窄（不含 `A.createElement("div",null,"文案")`
+   这种直接子节点写法），邻近度法补漏。
+7. **过滤字符集别收太紧**：`@`（`Ask anything, @ to mention`）、`!`、`&`
    （`Terms of Service & Data Use`）都在真实文案里。第一轮把 `@` 放进排除集，
    整类文案被静默丢弃，`Ask anything, @ to mention` 就是这么漏掉的。
+8. **2.25.25 这轮的实际产出**：新增 471 条（`dicts/ui_v2_225.json`），字典总数 2424 → 2895。
+   官方改写只配出 4 条高相似度，绝大多数「字典有、bundle 没有」是 1.x 遗留的
+   VS Code/Monaco 菜单词条（`Show in Finder`、`Select Line`、`Clear Terminal`），
+   不是失效文案，**别去删它们**——它们不会命中，但也无害。
 
 **三条铁律**：
 
 1. **只写完整的 UI 字符串，绝不写半截短语。** 加 `safety barriers` 这种碎片，
    `smartReplace` 会把整句变成「Disables all 安全屏障 for 最大迭代 velocity.」这类中英混杂。
    ≥ 30 字符的 key 会参与子串替换，碎片一旦超过这个长度危害最大。缺哪句就补哪句的完整原文。
+   **唯一例外：React 把一句拆成多个文本节点时，节点本身就是独立渲染单元。**
+   这时按**节点原文**收录不算半截短语（例：`Configure the browser subagent. It requires` +
+   链接 `Google Chrome` + `to be installed.` 是三个节点）。但必须先在 bundle 里确认
+   `A.createElement(..., "片段")` 的写法，不能凭猜测截取；能拼成整句的（`A.Fragment`
+   里连续的 `"…","…"`）仍应优先走 `REGEX_RULES` 或整句 key。
 2. **不翻用户内容**：会话标题、文件路径、邮箱、产品名（Antigravity / Gemini / Google AI /
    Jetski / Marketplace）、技能名一律保持英文。产品名列在 `PROTECTED` 里，
    而 `PROTECTED` **只放 Antigravity 自身的产品名词**——第三方/用户自装的技能名是每台机器

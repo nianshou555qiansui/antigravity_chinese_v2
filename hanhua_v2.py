@@ -287,6 +287,21 @@ def build_engine_js(dict_map):
         // 新模型上线公告：文案由服务端下发（bundle 里搜不到），模型名随官方更新变，只能按模板匹配
         [/^(.+) is now available to paid Pro plan subscribers[.]$/,
          (m, a) => a + ' 现已向付费 Pro 套餐订阅者开放。'],
+        // token 明细折叠按钮：bundle 里是 `Show ${n} breakdown${n===1?'':'s'}` 模板拼接，
+        // 写死进字典会随数量变化失效
+        [/^Show ([0-9]+) breakdowns?$/, (m, a) => '显示 ' + a + ' 项明细'],
+        // 模型分组的小感叹号：分组说明由服务端下发，组内模型列表随官方增删变化
+        [/^Models within this group: (.+)$/, (m, a) => '此组中的模型：' + a],
+        // 安全预设「继承全局设置」的说明：bundle 里是 `Inherits your Global Permissions
+        // when working ${E}.`，E 可能是 "in these conversations" / "in this workspace" 等
+        [/^Inherits your Global Permissions when working in these conversations[.]$/,
+         () => '在这些对话中工作时继承你的全局权限。'],
+        [/^Inherits your Global Permissions when working in this workspace[.]$/,
+         () => '在此工作区中工作时继承你的全局权限。'],
+        [/^Inherits your Global Permissions when working in this project[.]$/,
+         () => '在此项目中工作时继承你的全局权限。'],
+        [/^Inherits your Global Permissions when working (.+)[.]$/,
+         (m, a) => '工作时继承你的全局权限（范围：' + a + '）。'],
     ];
     function applyRegexRules(text) {
         for (const [re, fn] of REGEX_RULES) {

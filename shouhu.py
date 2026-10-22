@@ -324,6 +324,9 @@ def main():
         return
 
     VERBOSE = args.verbose
+    # 守护是独立入口，不走 hanhua_v2.main()：自己把本机 CDP 加进 NO_PROXY，
+    # 否则用户的 HTTP_PROXY 会让 websockets 把 ws://127.0.0.1 打进代理而连不上。
+    hh._bypass_proxy_for_local_cdp()
     if not acquire_lock():
         sys.exit(0)
     log(f"守护启动（端口 {args.port}，PID {os.getpid()}）")

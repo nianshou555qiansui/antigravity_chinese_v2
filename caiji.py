@@ -166,12 +166,30 @@ def collect(port):
     return asyncio.run(run())
 
 
+def _bypass_proxy_for_local_cdp():
+    """本机 CDP 走直连。caiji 是独立入口，不走 hanhua_v2.main()，必须自己调。
+
+    websockets 的 proxy 参数默认 True，会读 HTTP_PROXY/no_proxy；用户把代理写进
+    系统环境变量时，连 ws://127.0.0.1 会被打进代理而失败（实测 ConnectionRefused）。
+    """
+    existing = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    hosts = [h.strip() for h in existing.split(",") if h.strip()]
+    for host in ("127.0.0.1", "localhost", "::1"):
+        if host not in hosts:
+            hosts.append(host)
+    merged = ",".join(hosts)
+    os.environ["NO_PROXY"] = merged
+    os.environ["no_proxy"] = merged
+
+
 def main():
     parser = argparse.ArgumentParser(description="Antigravity 2.0 界面文本采集器")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--misses", action="store_true",
                         help="拉取引擎记录的未命中英文（官方更新后查词条漂移），写入 misses.json")
     args = parser.parse_args()
+
+    _bypass_proxy_for_local_cdp()
 
     if args.misses:
         print(f"[连接] 拉取端口 {args.port} 引擎的未命中日志...")
