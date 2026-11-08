@@ -32,8 +32,11 @@ python hanhua_v2.py --install-dir "D:\Antigravity" --port 9333
 python hanhua_v2.py --install-dir "/Applications/Antigravity.app"
 python hanhua_v2.py --autostart on|off|status  # 自动注入开关（守护 shouhu.py，仅 Windows）
 python shouhu.py --verbose                     # 前台跑守护，实时看日志
-python caiji.py                          # 抓当前页面未翻译英文 → pending.json
-python caiji.py --misses                 # 拉引擎未命中日志 → misses.json（需已注入）
+python hanhua_v2.py --status             # 只读快照，不注入/启动应用
+python hanhua_v2.py --doctor             # 只读诊断，包含词典严格校验及处理建议
+python caiji.py                          # 已验证主窗口来源统计 → pending.json（默认零原文）
+python caiji.py --include-ui-text        # 显式本地导出审核过的静态标签，不打印原文
+python caiji.py --misses                 # 新版引擎未命中来源计数 → misses.json（无原文）
 ```
 
 改完代码后的自查：先跑离线回归（不会启动或修改 Antigravity），再按改动做实机验证。
@@ -62,11 +65,15 @@ hanhua_v2.py     主脚本：加载字典 → 生成引擎 JS → 启动 Antigra
   ├ load_dictionary()   合并 dicts/*.json，对 key 做 normalize_text()
   ├ build_engine_js()   把字典嵌进一段 IIFE 模板字符串（整个翻译引擎都在这里面）
   └ prepare_instance() 复用实例或安全启动，关闭应用必须显式确认
-caiji.py         界面文本采集器（CDP 抓页面英文 → pending.json；--misses 拉取引擎未命中日志 → misses.json）
+caiji.py         主窗口来源统计与受限静态标签导出；旧版 raw misses 拒绝读取
+privacy_policy.py  引擎/采集器共享 DOM 保护与属性许可，读取前判定
 cdp_discovery.py  进程归属、回环端口及产品校验；列出候选 target，显式确认后的定向关闭
 cdp_targets.py    同一次求值内验证主界面并注入；逐窗口超时隔离，共享观察期
   ├ guarded_expression() 当前 origin + Hub 特征校验，通过后才能执行引擎
   └ inject_windows()     每轮重发现窗口，补注新窗口/重载页面，汇总当前结果
+cdp_connection.py  每目标独立连接、请求 ID/锁、超时、失败退避；新发现后才能重连
+diagnostics.py     只读窗口/词典诊断，不调用 engine.active() 或任何注入/启动入口
+guard_runtime.py   显式守护状态、单事件循环及可测试的 step()；发现放在线程执行
 shouhu.py        可选守护进程（仅 Windows）：发现已有调试端口→补注入，不启动/关闭应用
 qidong.bat           Windows 一键启动器（只调 hanhua_v2.py，保留错误退出码）
 qidong_mac.sh        macOS 一键启动器（只调 hanhua_v2.py，保留错误退出码）
@@ -129,8 +136,9 @@ Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只�
 
 所有窗口共用观察截止时间，从首个成功窗口起默认 30 秒；启动未就绪/暂时错误在初始 60 秒内重试，
 `--watch 0` 也保留初始等待。目标关闭、重建、导航后都按新一轮结果处理，不复用旧身份。
-短连接最多并发 4 个，每个有 5 秒超时；不得用整批超时反复取消队尾，否则前 4 个挂起页面会饿死后面的主窗口。
-在途探测可能让总耗时超过观察秒数。连接复用和退避留给 TODO 第 3 项。
+最多并发 4 个目标请求，每个有 5 秒超时；不得用整批超时反复取消队尾，否则前 4 个挂起页面会饿死后面的主窗口。
+在途探测可能让总耗时超过观察秒数。一个 `asyncio.run()` 覆盖完整观察期，连接在各轮之间复用；
+健康引擎使用不带词典的小型 guard 探测，只有明确 `missing + confirmed` 才发送完整表达式，再次原子校验身份。
 
 **不注册 `Page.addScriptToEvaluateOnNewDocument`**：已验证的 target 以后也可能导航到用户网页，
 不能继承自动注入。重载由下一轮重新验证后补注；同文档变化由引擎 `ensureTrusted()` 在观察器、
@@ -138,15 +146,36 @@ Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只�
 
 ### 守护进程（shouhu.py，可选，仅 Windows）
 
-`--autostart on` 建登录启动项，守护每轮结束后等待 2 秒。自动发现/验证端口后复用
-`inject_windows(watch_seconds=0, ready_timeout=0, only_missing=True)`，只补缺失引擎，不重复替换健康引擎；
+`--autostart on` 建登录启动项。`shouhu.watch()` 只加载/生成一次引擎，委托 `guard_runtime.watch()`
+用单个事件循环和连接池运行，`step()` 在线程中发现后先 reconcile，再逐窗口小型探测，只补缺失引擎；
 没有端口、页面未就绪、探测或注入失败都只等待/记录状态，不启动、关闭或重启 Antigravity。
 旧版的自动 taskkill、冷却时间和失败次数安全阀已删除；不要重新引入静默强制重启。
 
 - pythonw 子进程必须带 `CREATE_NO_WINDOW`，避免闪黑窗。
-- 状态变化才记日志，探测失败不是“进程不存在”；基础逐窗口超时已实现，连接复用、退避和诊断按 TODO 第 3 项处理。
+- `active` 等待 5 秒，加载/局部失败等待 2 秒；`waiting-app/port/window` 和发现 `error` 从 2 秒指数退避至 30 秒，状态恢复重置。
+- 连接级失败按目标独立退避，只有 fresh discovery 后才允许重连；超时/断线淘汰本目标会话，不能断掉健康窗口。
+- 进程/端点归属、目标地址改变或目标消失须关闭旧会话；发现失败也清空连接池，不能继续用缓存 URL 注入。
+- 状态/数量/固定原因码变化才记日志，退避秒数不参与去重；探测失败不是“进程不存在”，异常原文可能有私人数据，不打印。
+- 字典不再每轮重新加载；编辑词典后手动启动器可刷新当前窗口，还需重启守护才能更新以后补注所用字典，热更新留 TODO 第 7 项。
 - 旧守护进程不会热更新，升级后需 `--autostart off` 再 `--autostart on`，重新登录或手动启动新守护。
 - `shouhu.log` / `shouhu.lock` 不提交；停止守护不代表停止 Antigravity。
+
+### 只读诊断与连接生命周期
+
+`--status` / `--doctor` 在正常字典加载、`prepare_instance()`、引擎构建之前分流。只验证本地词典和
+已发现的 CDP；不启动/关闭应用、不注入、不改守护自启项、不创建日志/锁。两者退出码统一为
+0 检查通过、1 未就绪或需要处理、2 参数错误；`--doctor` 多显示文件级校验和建议，不自动修复。
+
+`engine.active()` 会执行 `ensureTrusted()`，可能停止观察器，**不能用于只读诊断**。
+引擎维护纯数据 `state={started,stopped,entries}`；诊断以 own-property descriptor 读取，
+不调用函数/getter、不读取 `misses`。旧引擎无快照则未知，不猜测运行正常。
+窗口仅输出本次序号、固定状态、词条数；禁止输出标题、URL、target ID、完整 UA、配置或 CSRF。
+词典检查保留 JSON pairs 以识别重复键，错误仅输出分类/文件名，不能回显原文或解析异常。
+词条数量不同提示刷新；数量相同不是字典指纹，不代表内容一致。
+
+每目标串行请求并递增 ID，忽略事件与旧请求回包；不使用多个同时 `recv()` 的协程。
+取消必须向外传播，watch/CLI 在 finally/async context 关闭所有会话，关闭操作自身也受超时限制。
+不要把每轮封进独立 `asyncio.run()`，那会销毁持久连接；也不要跨线程/事件循环复用 WebSocket。
 
 ### 翻译引擎
 
@@ -179,15 +208,25 @@ Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只�
 曾出过 bug：JS 侧写成 `.replace(/[']/g, "'")`，字符类里只有 ASCII 引号，等于拿直引号换直引号——
 纯空操作，所有含撇号的句子静默漏翻。
 
-**2. 禁区类名分两类匹配，选错会造成方向相反的两种事故。**
+**2. 共享隐私规则先判定，再读取内容；类名区分片段与 token。**
 
 | 类别 | 匹配方式 | 选错的后果 |
 |---|---|---|
-| `BLOCKED_CLASS_SUBSTR`（`monaco-editor`、`code-block` 等多词类名） | 子串 | —— 足够特异，不会误伤 |
-| `BLOCKED_CLASS_TOKEN`（`terminal`、`preview` 等通用单词） | class token 精确 | 用子串会把 `terminal-settings-row` 这类正常设置容器整块判成禁区，整片界面漏翻 |
+| `classFragments`（`monaco-editor`、`code-block` 等） | 子串 | —— 足够特异，不会误伤 |
+| `classTokens`（`terminal`、`preview` 等） | HTML 空白分隔的 token 精确 | 子串会把 `terminal-settings-row` 等正常设置项误判为禁区 |
 
-`isInBlockedZone()` 向上回溯 **25 层**（不是 12）：Tailwind/React 嵌套很深，12 层够不到上层的
-禁区容器，用户的代码/会话内容就会漏出来被翻译。这段只对「值变过」的节点跑，代价可忽略。
+`privacy_policy.build_policy_js()` 返回局部策略对象，供引擎与采集表达式嵌入。保护检查必须在
+`nodeValue` / 候选属性读取和 `lastSeen` 缓存之前；被保护内容不需要读取或缓存原文。
+所有入口（首次、observer、重扫、重注入、Shadow）必须用同一策略，不可单独豁免属性。
+
+祖先检查同时遍历普通 parent、`assignedSlot` 与 `ShadowRoot.host`，检查两条所有权路径，
+不是只走 slot 或只走 parent。总预算 256 个节点，超限、循环、异常及 detached 节点拒绝；
+不能再“25 层查不到就允许”。边界属性 class/contenteditable/testid/quotable 变化也需监听并重判。
+
+2.29.0 已核验的精确保护标记包含 conversation-row-*、user-input-step、user-message-content/bubble、
+data-quotable=true、附件、项目/会话/侧问题标题、section-header、Lexical 根及账号入口。
+不要扩大成所有 `data-cascade-id` / `data-quotable-root`：它们含正常 composer 和工具栏。
+tooltip portal 混有用户文件名，不能只凭 role=tooltip 就当固定 UI；当前保守拒绝。
 
 会话/项目列表项的识别特征必须够精确：`DIV` + `relative` + `w-full` + `select-none` + `cursor-pointer`。
 只判 `select-none cursor-pointer` 会误伤菜单栏按钮（File/View/Window），导致它们不翻译。
@@ -202,10 +241,15 @@ observer 重新挂回 body。`active()` 必须复核身份，不能仅凭全局�
 `startEngine()` 保留 body 延迟出现的防御性重试：靠 `started` 标记 + `DOMContentLoaded` +
 3 秒定时器兜底。生产入口必须经过 `guarded_expression()`；裸引擎的无 guard 模式只用于离线测试。
 
-**属性翻译**：`TRANSLATABLE_ATTRS` 覆盖 `placeholder`/`title`/`aria-label`/`alt`/`data-title`/
-`data-tooltip-content` 等。属性**不查禁区**——它是 UI 元数据而非用户输入，查了会漏翻输入框提示。
-属性与文本节点共用 `translateAttrValue()` 的同一套规则（精确 → 大小写归一 → 正则），
-否则 `Send feedback as X` 这类动态文案作为 `aria-label` 出现时翻不了。
+**属性翻译**：来源固定为 text、placeholder、title、aria-label、alt、data-tooltip-content、
+aria-description、aria-placeholder。`data-title` 是动态分组标题，拒绝；普通 DIV/SPAN 的
+title/aria-label 不自动视为固定元数据。按钮/明确控件语义及审核过的静态标记可按许可翻译，
+但 hard 祖先永远优先；普通 INPUT/TEXTAREA 仅 placeholder/aria-placeholder 软例外，不读写 value。
+文本及获准属性仍共用精确/大小写/模板规则，保留合法动态模板变量。
+
+安全优先会使 section-header 内的固定 Pinned 标题、消息包装内动作、部分 tooltip 保留英文；
+不要为恢复覆盖率跳过 hard 祖先。未知组件普通正文为兼容仍精确匹配，不能据此宣称未来任意版本都绝无误翻。
+隐私版本 scope 为 `antigravity-main-v2`，不接受旧 v1 的 active 状态，补注会替换旧行为且不读取旧 misses。
 
 ## 字典约定
 
@@ -221,16 +265,22 @@ observer 重新挂回 body。`active()` 必须复核身份，不能仅凭全局�
 
 新增翻译只需在 `dicts/` 下加 JSON，不用改代码。
 
-官方更新后的词条漂移检查：引擎把「含英文、未进禁区、但没翻出来」的文本记进
-`misses`（内存 Set，上限 2000，重复注入即重置；只记文本节点不记属性——属性
-不查禁区，会话标题这类用户内容会混进来）。`python caiji.py --misses` 拉取，
-产物 `misses.json` 已进 .gitignore。
+### 统计与采集隐私
 
-**重新注入后 `misses` 会有假阳性**：新引擎带一份空的 `lastSeen`，首次全量扫描会撞上
-页面上**上一次注入留下的中文译文**。这些译文若保留拉丁字母（产品名、模型名，如
-`Gemini 4 Argon 现已向付费 Pro 套餐订阅者开放。`）就过不了「无英文字母」的短路，
-一路走到最后被记成未命中。排查时先滤掉含中文的条目——它们不是缺口。
-（`misses` 里含中文 = 已翻过；真正的缺口是纯英文条目。）
+引擎 `misses={schema:1,sources:{固定来源:次数}}` 只留数字，每来源最多 1000000，
+不存文本、上下文、选择器或文本哈希。WeakMap 避免同节点同值因重扫重复计数；
+内容改变后可再次计数，同一文案多节点不是唯一词条数，重注入清零，已有中文或明显敏感形态不计。
+`caiji.py --misses` 用 own-data descriptor 读取固定字段；旧 Set、getter、`active()` 都不得调用/遍历。
+
+采集器使用进程/端口发现及同一次求值内 origin+主界面检查，不再 first HTTP page 或固定 9333。
+默认不读 UI 值，仅计审核静态位置的来源，JSON `candidates=[]`；它不是英文/漏翻数量。
+显式 `--include-ui-text` 才读审核的 10 个精确按钮/菜单标记，并核对对应固定原文白名单，
+输出规范字面量而非 raw（防隐藏空白/上下文夹带）。未知组件即使普通 BUTTON 也不采原文。
+
+报告 schema 1 固定 mode/text_included/windows/sources/withheld/candidates；Python 再重建固定字段，
+拒绝非法类型/次数/文本，忽略额外页面字段。上限 1000 候选、120 字符、128 KiB；计数安全整数饱和。
+控制台只输出数量、固定错误码和文件名，不输出候选或绝对路径。只有全部成功才原子覆盖，
+失败保留旧文件；原子写入临时文件、pending/misses 报告均不提交。旧报告可能含私人原文，不能默认视为安全。
 
 **官方更新后系统性地找漏翻（bundle 审计法）**：逐页跑 `caiji.py` 只覆盖你点到的那几页，
 漏掉的页面永远不会暴露。要一次拿全，直接从 SPA 的 JS bundle 里挖——界面全部文案都在里面。
@@ -285,8 +335,8 @@ observer 重新挂回 body。`active()` 必须复核身份，不能仅凭全局�
    链接 `Google Chrome` + `to be installed.` 是三个节点）。但必须先在 bundle 里确认
    `A.createElement(..., "片段")` 的写法，不能凭猜测截取；能拼成整句的（`A.Fragment`
    里连续的 `"…","…"`）仍应优先走 `REGEX_RULES` 或整句 key。
-2. **不翻用户内容**：会话标题、文件路径、邮箱、产品名（Antigravity / Gemini / Google AI /
-   Jetski / Marketplace）、技能名一律保持英文。产品名列在 `PROTECTED` 里，
+2. **避免翻用户内容**：已识别的会话标题、文件路径和邮箱区域会受保护；未知组件边界并非绝对保证。
+   产品名（Antigravity / Gemini / Google AI / Jetski / Marketplace）保持英文，产品名列在 `PROTECTED` 里，
    而 `PROTECTED` **只放 Antigravity 自身的产品名词**——第三方/用户自装的技能名是每台机器
    不一样的本地配置，写死进去既泄露环境又对别人无用。
 3. **带变量的文案走 `REGEX_RULES`，不写死进字典。** 像
@@ -297,9 +347,10 @@ observer 重新挂回 body。`active()` 必须复核身份，不能仅凭全局�
 
 ## 隐私红线
 
-`pending.json` 是采集器产物，**已在 `.gitignore` 里，绝不提交**。它是某台机器某一次的界面快照，
-`caiji.py` 的过滤（JS 侧 `isUsableEnglish` + Python 侧 `SENSITIVE` 二次过滤，拦下即不落盘不上屏）
-是尽力而为不是保证——**实测曾夹带过账号邮箱**（`Send feedback as <邮箱>`），二次过滤就是为它加的。
+`pending.json` / `misses.json` 及原子写入临时文件**已在 `.gitignore` 里，绝不提交**。
+旧版页面采集曾夹带账号邮箱，已有报告不能因升级就视为安全，新代码也不会自动清理历史文件。
+当前 schema 1 默认只保存固定来源计数；显式 `--include-ui-text` 也只接受审核标记与固定标签的双白名单，
+不再通过通用敏感词过滤后导出任意页面原文。未知文案须人工核对或离线审计，勿粘贴私人内容。
 
 同理，任何「当前机器上有什么」的信息（已装技能名、用户目录、账号）都不该硬编码进源码。
 安装路径必须从 `%LOCALAPPDATA%` 取，不能写死 `C:\Users\...`。
@@ -329,16 +380,16 @@ issue 就泄露了，`_mask_proxy()` 就是干这个的。
   `--no-launch`；看到 `hub-mount-loading` 则等挂载稳定，不能移除身份检查来强行注入。
 - **「翻译了又变回英文」≠ 没匹配上**，通常是 React 重渲染覆盖，查 `characterData` 是否在监听。
 - **整句在字典里却不翻**，先查是不是被 `isProtected` 或禁区规则整段拦掉了。
-- **tooltip 只在悬停时才进 DOM**，静态扫描抓不到它的文案，要补 tooltip 翻译得在悬停时采集。
-- **tooltip 原文不必悬停采集**：相关页面打开后组件 JS 已加载，在页面里 `fetch`
+- **tooltip 只在悬停时才进 DOM**，但采集器会拒绝 `role=tooltip` 区域，且只导出审核过的静态标签；不要用 `caiji.py` 抓任意 tooltip。
+- **tooltip 原文不必从运行 DOM 采集**：相关页面打开后组件 JS 已加载，在页面里 `fetch`
   `performance.getEntriesByType('resource')` 列出的 .js 资源再搜字符串字面量即可拿到全文，
   连模板拼接的动态文案（如 `` `${key} Sends immediately` ``）都能看到源码。
   过滤 URL 时别用 `endsWith('.js')`——带查询串或 `.mjs` 的 chunk 会被漏掉
   （曾因此只扫到 2 个文件），用 `includes('.js')` 一类的宽松匹配。
   比悬停采集可靠，还能顺带发现 Mac 专属变体；新增正则规则前先这样确认拼接方式。
   注意别只搜 tooltip 文本本身——渲染处附近（`data-tooltip-id`、`content:"..."`）才是数据源。
-- **别用合成事件批量触发 hover 采集** —— 试过两次都把应用挂死（2 分钟超时）。改用被动采集器
-  （挂个定时器收集 tooltip 容器）+ 人工悬停。
+- **别用合成事件批量触发 hover** —— 试过两次都把应用挂死（2 分钟超时）。要审计 tooltip，
+  从 bundle 静态审计并人工核对候选；若确需验证显示效果，手动悬停查看翻译，不导出运行时原文。
 - **`qidong.bat` 必须是纯 ASCII**：cmd 按 GBK 解析 .bat，写中文会变乱码并被当成命令执行。
   同理别用 `timeout /t`（stdin 被重定向时直接报错退出），延时统一用 `ping -n N 127.0.0.1`。
 - **在 Git Bash 里测 Windows 命令要加 `MSYS_NO_PATHCONV=1`**，否则 `taskkill /f` 的 `/f`

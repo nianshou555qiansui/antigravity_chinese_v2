@@ -14,7 +14,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 
 class DiscoveryError(RuntimeError):
-    pass
+    def __init__(self, message, reason="discovery-failed"):
+        super().__init__(message)
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,7 @@ class Instance:
     endpoint: Endpoint | None = None
     page: dict | None = None
     pages: list = field(default_factory=list)
+    version: str = ""
 
     def __post_init__(self):
         if self.page and not self.pages:
@@ -193,22 +196,28 @@ def find_running_instance(port=None):
     if port is not None:
         candidates = [endpoint for endpoint in candidates if endpoint.port == port]
     matches = []
+    versions = {}
     for endpoint in candidates:
         version = _http_json(endpoint, "/json/version")
         if not isinstance(version, dict):
             continue
         agent = version.get("User-Agent", "")
-        if not isinstance(agent, str) or not re.search(r"(?:^|\s)Antigravity/[0-9]+(?:[.][0-9]+)+(?:\s|$)", agent):
+        match = re.search(r"(?:^|\s)Antigravity/([0-9]+(?:[.][0-9]+)+)(?:\s|$)", agent) if isinstance(agent, str) else None
+        if not match:
             continue
         if not any(old.port == endpoint.port for old in matches):
             matches.append(endpoint)
+            versions[endpoint] = match.group(1)
     if len(matches) > 1:
         ports = ", ".join(str(endpoint.port) for endpoint in matches)
-        raise DiscoveryError(f"Multiple Antigravity CDP ports ({ports}); select one with --port.")
+        raise DiscoveryError(f"Multiple Antigravity CDP ports ({ports}); select one with --port.", "ambiguous-ports")
     if not matches:
         return Instance(pids)
     endpoint = matches[0]
-    return Instance(pids, endpoint, pages=candidate_pages(endpoint, _http_json(endpoint, "/json")))
+    pages = _http_json(endpoint, "/json")
+    if not isinstance(pages, list):
+        raise DiscoveryError("Cannot read the verified CDP target list.", "target-list-unavailable")
+    return Instance(pids, endpoint, pages=candidate_pages(endpoint, pages), version=versions[endpoint])
 
 
 def require_free_port(port):

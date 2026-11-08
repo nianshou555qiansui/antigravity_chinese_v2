@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -134,12 +134,34 @@ class StartupTests(unittest.TestCase):
 
     def test_cli_rejects_conflicting_or_invalid_options_before_discovery(self):
         for options in (["--yes"], ["--force-restart", "--no-launch"],
-                        ["--force-restart", "--autostart", "on"], ["--port", "0"], ["--port", "65536"]):
+                        ["--force-restart", "--autostart", "on"], ["--port", "0"], ["--port", "65536"],
+                        ["--watch", "-1"], ["--status", "--doctor"], ["--doctor", "--force-restart"],
+                        ["--status", "--yes"], ["--doctor", "--autostart", "status"],
+                        ["--status", "--watch", "0"], ["--doctor", "--install-dir", "fixture"]):
             with self.subTest(options=options), patch.object(sys, "argv", ["hanhua_v2.py", *options]):
                 with self.assertRaises(SystemExit) as result:
                     hh.main()
                 self.assertEqual(result.exception.code, 2)
         self.find.assert_not_called()
+
+    def test_diagnostic_cli_never_prepares_builds_or_injects(self):
+        import diagnostics
+        for flag in ("--status", "--doctor"):
+            for code in (0, 1):
+                with self.subTest(flag=flag, code=code), patch.object(
+                        diagnostics, "run", return_value=code) as run, patch.object(
+                        hh, "prepare_instance", side_effect=AssertionError("diagnosis must not launch")), patch.object(
+                        hh, "build_engine_js", side_effect=AssertionError("diagnosis must not build")), patch.object(
+                        hh, "load_dictionary", side_effect=AssertionError("diagnosis uses strict validator")), patch.object(
+                        sys, "argv", ["hanhua_v2.py", flag, "--port", "7542", "--no-launch"]):
+                    with self.assertRaises(SystemExit) as result:
+                        hh.main()
+                    self.assertEqual(result.exception.code, code)
+                    run.assert_called_once_with(port=7542, doctor=flag == "--doctor")
+        self.find.assert_not_called()
+        self.launch.assert_not_called()
+        self.stop.assert_not_called()
+        self.inject.assert_not_called()
 
     def test_main_delegates_selected_port_to_guarded_multiwindow_manager(self):
         candidate = {"id": "preview", "title": "Antigravity"}
@@ -191,8 +213,13 @@ class StartupTests(unittest.TestCase):
         for state in states:
             self.find.side_effect = state if isinstance(state, Exception) else None
             self.find.return_value = state
+            async def one_round(engine_js, **kwargs):
+                import guard_runtime
+                controller = guard_runtime.GuardController(engine_js, AsyncMock(), on_status=kwargs["on_status"])
+                await controller.step()
+
             with self.subTest(state=state), patch.object(shouhu, "log"), patch.object(
-                    shouhu.time, "sleep", side_effect=KeyboardInterrupt):
+                    shouhu.guard_runtime, "watch", side_effect=one_round):
                 shouhu.watch()
                 self.inject.assert_not_called()
         self.stop.assert_not_called()
@@ -201,16 +228,23 @@ class StartupTests(unittest.TestCase):
     def test_guard_sends_candidates_to_manager_without_treating_them_as_accepted(self):
         candidates = [{"id": "preview", "title": "Antigravity"}, {"id": "other"}]
         self.find.return_value = discovery.Instance({23}, discovery.Endpoint("127.0.0.1", 7542), pages=candidates)
-        self.inject.side_effect = None
-        self.inject.return_value = hh.cdp_targets.WindowReport([
+        results = [
             hh.cdp_targets.TargetResult("preview", "skipped", "not-hub-preload"),
             hh.cdp_targets.TargetResult("other", "pending", "bootstrap-loading"),
-        ])
-        with patch.object(shouhu, "log"), patch.object(shouhu.time, "sleep", side_effect=KeyboardInterrupt):
+        ]
+        pool = AsyncMock()
+        translate = AsyncMock(return_value=results)
+
+        async def one_round(engine_js, **kwargs):
+            import guard_runtime
+            await guard_runtime.GuardController(engine_js, pool, port=kwargs["port"], translate=translate,
+                                                on_status=kwargs["on_status"]).step()
+
+        with patch.object(shouhu, "log"), patch.object(shouhu.guard_runtime, "watch", side_effect=one_round):
             shouhu.watch(7542)
         self.find.assert_called_once_with(7542)
-        self.inject.assert_called_once_with(
-            7542, "fixture-engine", watch_seconds=0, ready_timeout=0, only_missing=True)
+        translate.assert_awaited_once_with(candidates, "fixture-engine", pool=pool)
+        self.inject.assert_not_called()
         self.launch.assert_not_called()
         self.stop.assert_not_called()
 
@@ -220,18 +254,29 @@ class StartupTests(unittest.TestCase):
             discovery.Instance({23}, endpoint, pages=[{"id": "main"}]),
             discovery.Instance({23}, endpoint, pages=[{"id": "main"}, {"id": "new"}]),
         ]
-        self.inject.side_effect = [
+        translate = AsyncMock(side_effect=[
             discovery.DiscoveryError("navigation changed"),
-            hh.cdp_targets.WindowReport([hh.cdp_targets.TargetResult("new", "injected", confirmed=True)]),
-        ]
-        with patch.object(shouhu, "log"), patch.object(shouhu.time, "sleep", side_effect=[None, KeyboardInterrupt]):
+            [hh.cdp_targets.TargetResult("new", "injected", confirmed=True)],
+        ])
+        pool = AsyncMock()
+
+        async def two_rounds(engine_js, **kwargs):
+            import guard_runtime
+            controller = guard_runtime.GuardController(engine_js, pool, translate=translate,
+                                                       on_status=kwargs["on_status"])
+            await controller.step()
+            await controller.step()
+
+        with patch.object(shouhu, "log"), patch.object(shouhu.guard_runtime, "watch", side_effect=two_rounds):
             shouhu.watch()
         self.assertEqual(self.find.call_count, 2)
         self.assertTrue(all(call.args == (None,) for call in self.find.call_args_list))
-        self.assertEqual(self.inject.call_count, 2)
-        for call in self.inject.call_args_list:
-            self.assertEqual(call.args, (7542, "fixture-engine"))
-            self.assertEqual(call.kwargs, {"watch_seconds": 0, "ready_timeout": 0, "only_missing": True})
+        self.assertEqual(translate.await_count, 2)
+        for call in translate.call_args_list:
+            self.assertEqual(call.args[1], "fixture-engine")
+            self.assertEqual(call.kwargs, {"pool": pool})
+        pool.close.assert_awaited_once()
+        self.inject.assert_not_called()
         self.launch.assert_not_called()
         self.stop.assert_not_called()
 
@@ -259,6 +304,8 @@ class ConfirmationTests(unittest.TestCase):
         self.assertIn('set "RESULT=%ERRORLEVEL%"', batch)
         self.assertIn("exit /b %RESULT%", batch)
         self.assertIn('exit "$result"', mac)
+        self.assertNotIn("Translation engine injected", batch)
+        self.assertNotIn("翻译引擎已在内存中", mac)
 
 
 if __name__ == "__main__":

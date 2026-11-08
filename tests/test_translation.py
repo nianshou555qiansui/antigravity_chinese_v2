@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 import hanhua_v2
 import cdp_targets
+import diagnostics
 
 
 class TranslationTests(unittest.TestCase):
@@ -91,6 +92,8 @@ class TranslationTests(unittest.TestCase):
         page = {"url": "https://127.0.0.1:7555/"}
         payload["guarded"] = cdp_targets.guarded_expression(page, payload["engine"])
         payload["forced"] = cdp_targets.guarded_expression(page, payload["engine"], force=True)
+        payload["probe"] = cdp_targets.guarded_expression(page, None)
+        payload["diagnosis"] = diagnostics.diagnostic_expression(page)
         process = subprocess.run(
             [node, str(ROOT / "tests" / "engine.test.js")],
             input=json.dumps(payload, ensure_ascii=True),

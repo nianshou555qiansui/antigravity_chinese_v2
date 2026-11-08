@@ -260,7 +260,7 @@ class DiscoveryTests(unittest.TestCase):
             (7542, "/json"): [page()],
         })
         instance = discovery.find_running_instance()
-        self.assertEqual(instance, discovery.Instance({9132}, endpoint, page()))
+        self.assertEqual(instance, discovery.Instance({9132}, endpoint, page(), version="2.29.0"))
         pids.assert_called_once_with()
         listeners.assert_called_once_with({9132})
         self.assertEqual(request.call_count, 2)
@@ -303,7 +303,19 @@ class DiscoveryTests(unittest.TestCase):
             (7542, "/json/version"): {"User-Agent": "Antigravity/2.29.0"},
             (7542, "/json"): [page(url="data:text/html,loading")],
         })
-        self.assertEqual(discovery.find_running_instance(), discovery.Instance({9132}, endpoint))
+        self.assertEqual(discovery.find_running_instance(), discovery.Instance({9132}, endpoint, version="2.29.0"))
+
+    def test_target_list_failure_is_not_an_empty_window_snapshot(self):
+        endpoint = discovery.Endpoint("127.0.0.1", 7542)
+        _, _, request = self.mock_discovery([endpoint], {})
+        for bad_list in (None, {}, False, "private response"):
+            with self.subTest(response=bad_list):
+                request.side_effect = lambda endpoint, path: (
+                    {"User-Agent": "Antigravity/2.29.0"} if path == "/json/version" else bad_list)
+                with self.assertRaises(discovery.DiscoveryError) as error:
+                    discovery.find_running_instance()
+                self.assertEqual(error.exception.reason, "target-list-unavailable")
+                self.assertNotIn("private", str(error.exception))
 
     def test_explicit_port_never_falls_back_to_another_valid_listener(self):
         endpoints = [discovery.Endpoint("127.0.0.1", 7542), discovery.Endpoint("127.0.0.1", 9333)]

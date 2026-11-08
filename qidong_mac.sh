@@ -17,10 +17,10 @@ if python3 "$DIR/hanhua_v2.py" "$@"; then
     echo "[2/2] Done!"
 else
     result=$?
-    echo "[错误] 注入失败，请查看上方提示。"
+    echo "[错误] 命令失败或需要处理，请查看上方提示。"
     exit "$result"
 fi
 
 echo
-echo "[Note] 翻译引擎已在内存中。关掉本窗口不影响汉化；下次启动需重新运行。"
+echo "[Note] 命令已完成，注入或诊断结果请以上方输出为准。"
 echo

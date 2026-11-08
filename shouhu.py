@@ -1,11 +1,13 @@
 """可选的安全注入守护：只复用已验证的调试端口，不启动或重启应用。"""
 import argparse
+import asyncio
 import os
 import subprocess
 import sys
 import time
 
 import hanhua_v2 as hh
+import guard_runtime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 LOCK_PATH = os.path.join(SCRIPT_DIR, 'shouhu.lock')
@@ -14,10 +16,8 @@ LOG_MAX = 200 * 1024
 LNK_NAME = 'Antigravity HanHua Guard.lnk'
 
 # pythonw 没有控制台，子进程（tasklist/taskkill/powershell）会各自弹黑窗，
-# 轮询每 2 秒一次就成了无限闪屏。CREATE_NO_WINDOW 是唯一正确的组合。
+# 后台轮询不能闪黑窗。CREATE_NO_WINDOW 是唯一正确的组合。
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-
-POLL = 2.0
 
 VERBOSE = False
 
@@ -73,35 +73,15 @@ def release_lock():
 
 
 def watch(port=None):
-    previous_status = None
-    while True:
-        try:
-            instance = hh.cdp_discovery.find_running_instance(port)
-            if instance.pages:
-                report = hh.cdp_targets.inject_windows(
-                    instance.endpoint.port, hh.build_engine_js(hh.load_dictionary()),
-                    watch_seconds=0, ready_timeout=0, only_missing=True)
-                status = (f"端口 {instance.endpoint.port}：主窗口 {report.successful}，"
-                          f"跳过 {report.skipped}，未完成 {report.failed}")
-            elif instance.endpoint:
-                status = "调试端口已就绪，等待主界面加载（不重启应用）"
-            elif instance.pids:
-                status = "应用正在运行但未找到可用调试端口；请保存工作后手动运行 --force-restart"
-            else:
-                status = "等待 Antigravity 启动（守护不会主动启动应用）"
-        except KeyboardInterrupt:
-            log("收到中断，守护退出")
-            return
-        except Exception as exc:
-            status = f"探测或注入失败，保持应用不变: {type(exc).__name__}: {exc}"
-        if status != previous_status:
-            log(status)
-            previous_status = status
-        try:
-            time.sleep(POLL)
-        except KeyboardInterrupt:
-            log("收到中断，守护退出")
-            return
+    dictionary = hh.load_dictionary()
+    if not dictionary:
+        log("词典为空，守护未启动；请运行 --doctor 检查。")
+        return
+    engine = hh.build_engine_js(dictionary)
+    try:
+        asyncio.run(guard_runtime.watch(engine, port=port, on_status=log))
+    except KeyboardInterrupt:
+        log("收到中断，守护退出")
 
 
 # ---------- --autostart 开关（由 hanhua_v2.py 调用） ----------

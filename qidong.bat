@@ -17,13 +17,13 @@ if not "%RESULT%"=="0" goto failed
 echo.
 echo [2/2] Done!
 echo.
-echo [Note] Translation engine injected. Closing this window is OK.
+echo [Note] Command completed. See the result above. Closing this window is OK.
 echo.
 pause
 exit /b 0
 
 :failed
 echo.
-echo [Error] Translation failed. Review the message above.
+echo [Error] Command failed or needs attention. Review the message above.
 pause
 exit /b %RESULT%

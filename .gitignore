@@ -1,7 +1,8 @@
-# 采集器产物：是某台机器某一次的界面快照，里面会夹带账号邮箱、
-# 会话标题等本机数据，绝不要提交。需要样例请自行运行 caiji.py 生成。
+# 本机采集产物；旧版可能包含私人原文，显式候选也不得提交。
 pending.json
 misses.json
+.pending.json.*.tmp
+.misses.json.*.tmp
 
 # 守护进程的运行时产物（日志含本机启动记录、锁含 PID）
 shouhu.log

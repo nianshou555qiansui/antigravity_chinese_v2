@@ -3,20 +3,22 @@
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
 
-const chunks = [];
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => chunks.push(chunk));
-process.stdin.on("end", () => {
-    try {
-        const payload = JSON.parse(chunks.join(""));
-        run(payload);
-        runGuardTests(payload);
-        process.stdout.write(`ok: ${Object.keys(payload.dictionary).length} entries\n`);
-    } catch (error) {
-        console.error(error.stack || error);
-        process.exitCode = 1;
-    }
-});
+if (require.main === module) {
+    const chunks = [];
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", chunk => chunks.push(chunk));
+    process.stdin.on("end", () => {
+        try {
+            const payload = JSON.parse(chunks.join(""));
+            run(payload);
+            runGuardTests(payload);
+            process.stdout.write(`ok: ${Object.keys(payload.dictionary).length} entries\n`);
+        } catch (error) {
+            console.error(error.stack || error);
+            process.exitCode = 1;
+        }
+    });
+}
 
 function makeHarness(hasBody = true) {
     const observers = [];
@@ -29,6 +31,7 @@ function makeHarness(hasBody = true) {
             this.nodeType = type;
             this.childNodes = [];
             this.parentNode = null;
+            this.assignedSlot = null;
         }
 
         get parentElement() {
@@ -37,18 +40,37 @@ function makeHarness(hasBody = true) {
 
         get isConnected() {
             let parent = this;
+            const seen = new Set();
             while (parent) {
-                if (parent === document.body) return true;
+                if (parent === document) return true;
+                if (seen.has(parent)) return false;
+                seen.add(parent);
                 parent = parent.parentNode || parent.host;
             }
             return false;
         }
 
         appendChild(child) {
+            if (child.parentNode) child.parentNode.removeChild(child);
             child.parentNode = this;
             this.childNodes.push(child);
             notify(this, { type: "childList", target: this, addedNodes: [child] });
             return child;
+        }
+
+        removeChild(child) {
+            const index = this.childNodes.indexOf(child);
+            assert.notEqual(index, -1, "removeChild requires an existing child");
+            this.childNodes.splice(index, 1);
+            child.parentNode = null;
+            notify(this, { type: "childList", target: this, addedNodes: [] });
+            return child;
+        }
+
+        getRootNode() {
+            let root = this;
+            while (root.parentNode) root = root.parentNode;
+            return root;
         }
     }
 
@@ -82,10 +104,21 @@ function makeHarness(hasBody = true) {
         }
 
         getAttribute(name) { return this.attrs.has(name) ? this.attrs.get(name) : null; }
+        hasAttribute(name) { return this.attrs.has(name); }
         setAttribute(name, value) {
             this.attrs.set(name, value);
             if (name === "class") this.className = value;
             notify(this, { type: "attributes", target: this, attributeName: name });
+        }
+
+        removeAttribute(name) {
+            this.attrs.delete(name);
+            if (name === "class") this.className = "";
+            notify(this, { type: "attributes", target: this, attributeName: name });
+        }
+
+        get classList() {
+            return { contains: name => this.className.split(/[\t\n\f\r ]+/).includes(name) };
         }
 
         attachShadow() {
@@ -100,7 +133,7 @@ function makeHarness(hasBody = true) {
             const visit = node => {
                 for (const child of node.childNodes) {
                     if (child.nodeType === 1) {
-                        if (names.some(name => child.getAttribute(name) !== null)) matches.push(child);
+                        if (names.some(name => child.hasAttribute(name))) matches.push(child);
                         visit(child);
                     }
                 }
@@ -114,11 +147,12 @@ function makeHarness(hasBody = true) {
         constructor(callback) {
             this.callback = callback;
             this.roots = new Set();
+            this.options = new Map();
             observers.push(this);
         }
 
-        observe(root) { this.roots.add(root); }
-        disconnect() { this.roots.clear(); }
+        observe(root, options) { this.roots.add(root); this.options.set(root, options); }
+        disconnect() { this.roots.clear(); this.options.clear(); }
     }
 
     function notify(target, record) {
@@ -126,7 +160,9 @@ function makeHarness(hasBody = true) {
             let current = target;
             while (current) {
                 if (observer.roots.has(current)) {
-                    observer.callback([record]);
+                    const options = observer.options.get(current);
+                    if (record.type !== "attributes" || !options.attributeFilter
+                        || options.attributeFilter.includes(record.attributeName)) observer.callback([record]);
                     break;
                 }
                 current = current.parentNode;
@@ -135,7 +171,9 @@ function makeHarness(hasBody = true) {
     }
 
     const document = {
-        body: hasBody ? new ElementStub("body") : null,
+        nodeType: 9,
+        parentNode: null,
+        childNodes: [],
         addEventListener(type, callback) {
             if (!events.has(type)) events.set(type, []);
             events.get(type).push(callback);
@@ -145,11 +183,24 @@ function makeHarness(hasBody = true) {
             events.delete(type);
         },
     };
+    document.documentElement = new ElementStub("html");
+    document.documentElement.parentNode = document;
+    document.childNodes.push(document.documentElement);
+    let body = null;
+    Object.defineProperty(document, "body", {
+        get() { return body; },
+        set(value) {
+            if (body) document.documentElement.removeChild(body);
+            body = value;
+            if (value) document.documentElement.appendChild(value);
+        },
+    });
+    if (hasBody) document.body = new ElementStub("body");
     const window = {};
     const context = vm.createContext({
         window,
         document,
-        Node: { ELEMENT_NODE: 1, TEXT_NODE: 3, DOCUMENT_FRAGMENT_NODE: 11 },
+        Node: { ELEMENT_NODE: 1, TEXT_NODE: 3, DOCUMENT_NODE: 9, DOCUMENT_FRAGMENT_NODE: 11 },
         Element: ElementStub,
         MutationObserver: ObserverStub,
         setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
@@ -171,7 +222,7 @@ function run({ engine, dictionary, normSamples }) {
     const entries = Object.entries(dictionary);
     const exact = [];
     for (const [key, expected] of entries) {
-        const el = new h.ElementStub("div", { "aria-label": key });
+        const el = new h.ElementStub("button", { "aria-label": key });
         const text = el.appendChild(new h.TextStub(key));
         h.document.body.appendChild(el);
         exact.push({ el, text, expected, key });
@@ -180,7 +231,8 @@ function run({ engine, dictionary, normSamples }) {
         const el = new h.ElementStub("div", { "data-title": raw });
         const text = el.appendChild(new h.TextStub(raw));
         h.document.body.appendChild(el);
-        exact.push({ el, text, expected, key: raw, attr: "data-title", textExpected: expected === normalized ? raw : expected });
+        exact.push({ el, text, expected, key: raw, attr: "data-title", attrExpected: raw,
+            textExpected: expected === normalized ? raw : expected });
     }
     const dynamicCases = [];
     for (const count of [1, 2]) {
@@ -200,7 +252,7 @@ function run({ engine, dictionary, normSamples }) {
     for (const query of ["", "File / Gemini+v2", "My-App_42", "Create a new project from one or more folders.", "My  App\u2019s query", "\u4e2d\u6587 Create a new project from one or more folders."])
         dynamicCases.push([`No apps found for "${query}".`, `\u672a\u627e\u5230\u4e0e\u201c${query}\u201d\u5339\u914d\u7684\u5e94\u7528\u3002`]);
     for (const [raw, expected] of dynamicCases) {
-        const el = new h.ElementStub("div", { title: raw });
+        const el = new h.ElementStub("button", { title: raw });
         const text = el.appendChild(new h.TextStub(raw));
         h.document.body.appendChild(el);
         exact.push({ el, text, expected, key: raw, attr: "title" });
@@ -246,7 +298,7 @@ function run({ engine, dictionary, normSamples }) {
 
     const oldHost = h.document.body.appendChild(new h.ElementStub("div"));
     const oldRoot = oldHost.attachShadow({ mode: "open" });
-    const oldShadow = addText(oldRoot, "File", "span", { title: "Save" });
+    const oldShadow = addText(oldRoot, "File", "button", { title: "Save" });
     const shadowInput = oldRoot.appendChild(new h.ElementStub("input", { placeholder: "File" }));
     const blockedHost = h.document.body.appendChild(new h.ElementStub("div", { class: "editor-container" }));
     const blockedRoot = blockedHost.attachShadow({ mode: "open" });
@@ -256,13 +308,13 @@ function run({ engine, dictionary, normSamples }) {
     const deepShadowText = shadowDeep.appendChild(new h.TextStub("File"));
     const blockedAttr = blockedRoot.appendChild(new h.ElementStub("div", { "aria-label": "File" }));
     const fragment = new h.FragmentStub();
-    const fragmentChild = addText(fragment, "File", "span", { title: "Save" });
+    const fragmentChild = addText(fragment, "File", "button", { title: "Save" });
     h.document.body.appendChild(fragment);
 
     h.inject(engine);
-    for (const { el, text, expected, key, attr = "aria-label", textExpected = expected } of exact) {
+    for (const { el, text, expected, key, attr = "aria-label", textExpected = expected, attrExpected = expected } of exact) {
         assert.equal(text.nodeValue, textExpected, `exact text ${JSON.stringify(key)}`);
-        assert.equal(el.getAttribute(attr), expected, `exact attr ${JSON.stringify(key)}`);
+        assert.equal(el.getAttribute(attr), attrExpected, `exact attr ${JSON.stringify(key)}`);
     }
     for (const { text } of protectedFixtures) assert.equal(text.nodeValue, "File", "protected text");
     assert.equal(deepText.nodeValue, "File", "deep editor");
@@ -279,7 +331,7 @@ function run({ engine, dictionary, normSamples }) {
     assert.equal(shadowInput.getAttribute("placeholder"), sample("File"), "shadow input metadata");
     assert.equal(blockedDirect.nodeValue, "File", "blocked shadow host direct text");
     assert.equal(deepShadowText.nodeValue, "File", "shadow fragment does not consume blocked-zone depth");
-    assert.equal(blockedAttr.getAttribute("aria-label"), sample("File"), "shadow host metadata");
+    assert.equal(blockedAttr.getAttribute("aria-label"), "File", "blocked shadow metadata remains private");
     assert.equal(fragmentChild.text.nodeValue, sample("File"), "document fragment text");
     assert.equal(fragmentChild.el.getAttribute("title"), sample("Save"), "document fragment attr");
     assert.ok(h.observers[0].roots.has(oldRoot), "existing shadow root observed");
@@ -291,7 +343,7 @@ function run({ engine, dictionary, normSamples }) {
     const newHost = h.document.body.appendChild(new h.ElementStub("div"));
     const newRoot = newHost.attachShadow({ mode: "open" });
     assert.ok(h.observers[0].roots.has(newRoot), "new shadow root observed");
-    const newShadow = addText(newRoot, "File", "div", { title: "Save" });
+    const newShadow = addText(newRoot, "File", "button", { title: "Save" });
     assert.equal(newShadow.text.nodeValue, sample("File"), "new shadow root text");
     assert.equal(newShadow.el.getAttribute("title"), sample("Save"), "new shadow root attr");
     const hook = h.ElementStub.prototype.attachShadow;
@@ -303,6 +355,7 @@ function run({ engine, dictionary, normSamples }) {
         if (attr === "title") assert.equal(text.nodeValue, expected, `dynamic variable after reinjection ${key}`);
     }
     assert.equal(oldObserver.roots.size, 0, "old observer disconnected");
+    assert.equal(oldEngine.state.stopped, true, "old engine snapshot stopped on replacement");
     assert.notEqual(h.window.__ag_hanhua_engine__, oldEngine, "engine replaced");
     h.tick(5000);
     assert.equal(oldObserver.roots.size, 0, "old timer must not reconnect");
@@ -332,6 +385,8 @@ function run({ engine, dictionary, normSamples }) {
     assert.equal(timerText.nodeValue, sample("File"), "late body timer fallback");
 }
 
+module.exports = { makeHarness };
+
 function hubHarness() {
     const h = makeHarness();
     h.window.top = h.window;
@@ -349,7 +404,7 @@ function hubHarness() {
     return h;
 }
 
-function runGuardTests({ guarded, forced, dictionary }) {
+function runGuardTests({ guarded, forced, probe, diagnosis, dictionary }) {
     const standalonePaths = [
         "/artifact", "/artifact/abc", "/artifact-preview", "/artifactXXX",
         "/terminal-standalone/", "/terminal-standalone-test",
@@ -358,7 +413,14 @@ function runGuardTests({ guarded, forced, dictionary }) {
     for (const pathname of ["/", "/c/example", "/history", "/sidecars", "/customizations/plugins", "/view/example"]) {
         const h = hubHarness();
         h.context.location.pathname = pathname;
+        assert.equal(h.inject(probe).status, "missing", "small probe does not install an engine");
+        assert.equal(h.observers.length, 0);
         assert.equal(h.inject(guarded).status, "injected", `main route ${pathname}`);
+        assert.equal(h.window.__ag_hanhua_engine__.state.started, true);
+        assert.equal(h.window.__ag_hanhua_engine__.state.stopped, false);
+        assert.equal(h.window.__ag_hanhua_engine__.state.entries, Object.keys(dictionary).length);
+        assert.equal(h.inject(diagnosis).engine, "running", "diagnosis reads real engine snapshot");
+        assert.equal(h.inject(probe).status, "alive", "healthy probe needs no dictionary payload");
         assert.equal(h.text.nodeValue, dictionary.File);
         assert.equal(h.inject(guarded).status, "alive", "already running without duplicate injection");
         assert.equal(h.observers.length, 1);
@@ -418,5 +480,16 @@ function runGuardTests({ guarded, forced, dictionary }) {
         assert.equal(h.observers[0].roots.size, 0);
         assert.equal(h.intervals.size, 0);
         assert.equal(h.window.__ag_hanhua_engine__.active(), false);
+        assert.equal(h.window.__ag_hanhua_engine__.state.stopped, true);
     }
+    const readonly = hubHarness();
+    readonly.inject(guarded);
+    readonly.context.location.pathname = "/artifact-preview";
+    assert.equal(readonly.inject(diagnosis).status, "skipped");
+    assert.equal(readonly.window.__ag_hanhua_engine__.state.stopped, false,
+        "diagnosis cannot call active() or stop the engine itself");
+    assert.equal(readonly.observers[0].roots.size, 1);
+    readonly.tick(3000);
+    assert.equal(readonly.window.__ag_hanhua_engine__.state.stopped, true,
+        "normal engine timer, not diagnosis, enforces changed identity");
 }

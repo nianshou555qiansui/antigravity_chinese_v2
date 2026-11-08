@@ -20,6 +20,7 @@ import subprocess
 import http.client
 import cdp_discovery
 import cdp_targets
+import privacy_policy
 
 # ★★★ 配置 ★★★
 DEFAULT_PORT = 9333
@@ -137,11 +138,15 @@ def build_engine_js(dict_map):
     // 记录每个文本节点上一次处理过的值：值没变就跳过，避免重复开销
     const lastSeen = new WeakMap();
 
-    // 词条漂移日志：记下「含英文、未进禁区、但整条没翻出来」的文本。
-    // 官方更新后用 caiji.py --misses 拉取，即可看出哪些词条失效或缺失。
-    // 只记文本节点不记属性——属性不查禁区，会话标题这类用户内容会混进来。
-    // 上限 2000 防病态增长；重复注入会重置（会话级日志，够用）。
-    const misses = new Set();
+    const privacy = PRIVACY_PLACEHOLDER;
+    // Only bounded source counts survive a miss; never retain raw user context or hashes.
+    const misses = {schema: 1, sources: Object.fromEntries(privacy.sources.map(source => [source, 0]))};
+    const attrSeen = new WeakMap();
+    function recordMiss(source, raw) {
+        if (privacy.usableText(raw) && Object.prototype.hasOwnProperty.call(misses.sources, source)) {
+            misses.sources[source] = Math.min(1000000, misses.sources[source] + 1);
+        }
+    }
 
     // 保护名单：产品名/品牌，禁止子串替换（防止被部分匹配切碎）
     // 只放 Antigravity 自身的产品名词。第三方/用户自装的技能名不要写进来——
@@ -189,24 +194,7 @@ def build_engine_js(dict_map):
         return result;
     }
 
-    // 禁区：代码/编辑器/输入/对话内容容器（防止翻译用户数据）
-    // 分两类匹配，因为匹配方式选错会造成两种相反的事故：
-    // - 多词类名足够特异，用子串匹配没问题
-    // - 'terminal'/'preview' 这种通用单词若也用子串匹配，会把 "terminal-settings-row"
-    //   这类正常设置项容器整块判成禁区，导致整片界面漏翻。必须按 class token 匹配。
-    const BLOCKED_CLASS_SUBSTR = [
-        'code-view', 'editor-container', 'monaco-editor', 'suggest-widget',
-        'output-view', 'debug-console', 'artifact-container',
-        'code-block', 'diff-view', 'input-area', 'chat-input'
-    ];
-    const BLOCKED_CLASS_TOKEN = ['terminal', 'xterm', 'preview'];
-    const BLOCKED_TAGS = ['SCRIPT', 'STYLE', 'CODE', 'PRE', 'INPUT', 'TEXTAREA',
-                          'SVG', 'CANVAS', 'SYMBOL', 'PATH', 'MATH', 'KBD'];
-
-    // 承载可见文案的属性（react-tooltip 用 data-tooltip-content，侧边栏分组用 data-title）
-    const TRANSLATABLE_ATTRS = ['placeholder', 'title', 'aria-label', 'alt',
-                                'data-title', 'data-tooltip-content',
-                                'aria-description', 'aria-placeholder'];
+    const TRANSLATABLE_ATTRS = privacy.attributes;
 
     // 必须与 Python 侧 normalize_text() 完全一致：字典 key 在加载时被归一化过，
     // 页面文本不做同样归一化就永远匹配不上。
@@ -218,39 +206,6 @@ def build_engine_js(dict_map):
                 .replace(/[’‘]/g, "'")
                 .replace(/[“”]/g, '"')
                 .replace(/^[ ]+|[ ]+$/g, '');
-    }
-
-    function isInBlockedZone(node) {
-        let curr = node.nodeType === Node.TEXT_NODE ? (node.parentElement || node.parentNode) : node;
-        let depth = 0;
-        // 深度 25：Tailwind/React 的嵌套很深，12 层不够——禁区容器在更上层时会漏判，
-        // 用户的代码/会话内容就会被翻译。这段只对"值变过"的文本节点跑，代价可忽略。
-        while (curr && depth < 25) {
-            if (curr.nodeType === Node.ELEMENT_NODE) {
-                const tag = curr.tagName.toUpperCase();
-                if (BLOCKED_TAGS.includes(tag)) return true;
-                const editable = curr.getAttribute('contenteditable');
-                if (editable !== null && ['', 'true', 'plaintext-only'].includes(editable.toLowerCase())) return true;
-                const className = curr.className || '';
-                if (typeof className === 'string') {
-                    if (BLOCKED_CLASS_SUBSTR.some(cls => className.includes(cls))) return true;
-                    const tokens = className.split(/[ ]+/);
-                    if (tokens.some(t => BLOCKED_CLASS_TOKEN.includes(t))) return true;
-                    // 会话/项目列表项容器（用户内容标题），保护不翻译
-                    // 特征：DIV + relative w-full select-none cursor-pointer（区别于普通按钮）
-                    if (tag === 'DIV'
-                        && className.includes('relative')
-                        && className.includes('w-full')
-                        && className.includes('select-none')
-                        && className.includes('cursor-pointer')) return true;
-                }
-                const role = curr.getAttribute('role') || '';
-                if (role === 'code' || role === 'img') return true;
-                depth++;
-            }
-            curr = curr.parentElement || curr.parentNode || curr.host;
-        }
-        return false;
     }
 
     // 动态文案规则：含变量（时间、数字）的句子无法穷举，用正则处理。
@@ -345,23 +300,35 @@ def build_engine_js(dict_map):
         return byRegex !== t ? byRegex : null;
     }
 
+    function translateAttributes(element) {
+        for (const attr of TRANSLATABLE_ATTRS) {
+            if (typeof element.hasAttribute === 'function' && !element.hasAttribute(attr)) continue;
+            if (!privacy.allowsAttribute(element, attr)) {
+                const previous = attrSeen.get(element);
+                if (previous) previous.delete(attr);
+                continue;
+            }
+            const raw = element.getAttribute(attr);
+            if (!raw) continue;
+            let seen = attrSeen.get(element);
+            if (!seen) { seen = new Map(); attrSeen.set(element, seen); }
+            if (seen.get(attr) === raw) continue;
+            const translated = translateAttrValue(raw);
+            const current = translated !== null && translated !== raw ? translated : raw;
+            seen.set(attr, current);
+            if (current !== raw) element.setAttribute(attr, current);
+            else recordMiss(attr, raw);
+        }
+    }
+
     function translateNode(node) {
         try {
             if (!node) return;
 
             if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
                 if (node.nodeType === Node.ELEMENT_NODE) {
-                    const tag = node.tagName.toUpperCase();
-
-                    // 属性是 UI 元数据，不是用户输入；输入框提示也需要翻译。
-                    for (const attr of TRANSLATABLE_ATTRS) {
-                        const v = node.getAttribute(attr);
-                        if (v) {
-                            const t = translateAttrValue(v);
-                            if (t !== null && t !== v) node.setAttribute(attr, t);
-                        }
-                    }
-                    if (BLOCKED_TAGS.includes(tag)) return;
+                    translateAttributes(node);
+                    if (!privacy.allowsText(node)) return;
 
                     if (node.shadowRoot) {
                         observeRoot(node.shadowRoot);
@@ -372,13 +339,14 @@ def build_engine_js(dict_map):
                 for (const child of node.childNodes) translateNode(child);
 
             } else if (node.nodeType === Node.TEXT_NODE) {
+                // Privacy decisions precede reads, matching, and WeakMap caching.
+                if (!privacy.allowsText(node)) { lastSeen.delete(node); return; }
                 let originalVal = node.nodeValue;
                 if (!originalVal || originalVal.trim().length < 1) return;
                 // 值没变过就跳过（这是性能关键：避免每轮全量重扫都做昂贵匹配）
                 if (lastSeen.get(node) === originalVal) return;
                 // 纯中文/无英文字母的文本无需处理
                 if (!/[A-Za-z]/.test(originalVal)) { lastSeen.set(node, originalVal); return; }
-                if (isInBlockedZone(node)) { lastSeen.set(node, originalVal); return; }
 
                 let newVal = originalVal;
                 const valNorm = norm(originalVal);
@@ -406,8 +374,7 @@ def build_engine_js(dict_map):
                     lastSeen.set(node, newVal);
                 } else {
                     lastSeen.set(node, originalVal);
-                    // 走到这里说明含英文且全部路径都没命中：记入漂移日志
-                    if (misses.size < 2000 && valNorm.length >= 3) misses.add(valNorm);
+                    recordMiss('text', valNorm);
                 }
             }
         } catch (e) {}
@@ -434,29 +401,23 @@ def build_engine_js(dict_map):
         subtree: true,
         characterData: true,
         attributes: true,
-        attributeFilter: TRANSLATABLE_ATTRS
+        attributeFilter: [...TRANSLATABLE_ATTRS, ...privacy.boundaryAttributes]
     };
     const observedRoots = new WeakSet();
     function observeRoot(root) {
-        if (observedRoots.has(root)) return;
+        if (observedRoots.has(root) || !privacy.allowsText(root)) return;
         observer.observe(root, obsOpts);
         observedRoots.add(root);
     }
 
     // 兜底：全量重扫可翻译属性（解决应用延迟设置 aria-label/title/placeholder 的漏翻）
-    // 属性不查禁区（是 UI 元数据，不是用户输入内容）
+    // Periodic and observer paths share the same privacy gate.
     function rescanAttributes() {
         if (!document.body) return;
         const sel = TRANSLATABLE_ATTRS.map(a => '[' + a + ']').join(',');
         for (const el of document.body.querySelectorAll(sel)) {
             if (!el.isConnected) continue;
-            for (const attr of TRANSLATABLE_ATTRS) {
-                const v = el.getAttribute(attr);
-                if (v) {
-                    const t = translateAttrValue(v);
-                    if (t !== null && t !== v) el.setAttribute(attr, t);
-                }
-            }
+            translateAttributes(el);
         }
     }
 
@@ -465,10 +426,12 @@ def build_engine_js(dict_map):
     // 旧引擎或已离开主界面的引擎必须完全停止，迟到的重试不能重新挂载。
     let stopped = false;
     let timerId = null;
+    const state = { started: false, stopped: false, entries: map.size, privacy: 1 };
     function ensureTrusted() {
         if (stopped) return false;
         if (trustedPage()) return true;
         stopped = true;
+        state.stopped = true;
         observer.disconnect();
         clearInterval(timerId);
         return false;
@@ -476,6 +439,7 @@ def build_engine_js(dict_map):
     const startEngine = () => {
         if (!ensureTrusted() || started || !document.body) return;
         started = true;
+        state.started = true;
         observeRoot(document.body);
         translateNode(document.body);
     };
@@ -513,19 +477,21 @@ def build_engine_js(dict_map):
     }, 3000);
 
     window.__ag_hanhua_engine__ = {
-        scope: 'antigravity-main-v1',
+        scope: 'antigravity-main-v2',
+        state: state,
         active: () => ensureTrusted() && started,
         observe: (root) => { if (ensureTrusted()) observeRoot(root); },
         misses: misses,
         disconnect: () => {
             stopped = true;
+            state.stopped = true;
             try { observer.disconnect(); } catch (e) {}
             try { clearInterval(timerId); } catch (e) {}
         }
     };
 })();
 """
-    return js_source.replace("DICT_PLACEHOLDER", dict_json)
+    return js_source.replace("PRIVACY_PLACEHOLDER", privacy_policy.build_policy_js()).replace("DICT_PLACEHOLDER", dict_json)
 
 
 def find_antigravity_exe(install_dir=None):
@@ -640,8 +606,11 @@ def main():
     parser.add_argument("--port", type=int, help=f"指定调试端口；省略则自动发现，首次启动用 {DEFAULT_PORT}")
     parser.add_argument("--no-launch", action="store_true",
                         help="不启动 Antigravity，只连已有调试端口注入（需已带端口启动）")
-    parser.add_argument("--watch", type=int, default=30,
+    parser.add_argument("--watch", type=int,
                         help="注入后守护多少秒（页面重载会自动补注，0=不守护，默认 30）")
+    diagnostic = parser.add_mutually_exclusive_group()
+    diagnostic.add_argument("--status", action="store_true", help="只读查看版本、端口、窗口、引擎及词典状态")
+    diagnostic.add_argument("--doctor", action="store_true", help="只读诊断并给出处理建议，不启动或修改应用")
     parser.add_argument("--autostart", choices=["on", "off", "status"],
                         help="自动注入开关：登录自启守护进程，只复用已有调试端口")
     parser.add_argument("--force-restart", action="store_true", help="保存工作后，确认关闭已有实例并重启")
@@ -653,6 +622,16 @@ def main():
         parser.error("--force-restart 不能与 --no-launch / --autostart 同用")
     if args.yes and not args.force_restart:
         parser.error("--yes 只能与 --force-restart 同用")
+    if args.watch is not None and args.watch < 0:
+        parser.error("--watch 不能为负数")
+    if args.status or args.doctor:
+        if args.force_restart or args.yes or args.autostart or args.watch is not None or args.install_dir:
+            parser.error("--status / --doctor 不能与重启、自启、--watch 或 --install-dir 同用")
+        import diagnostics
+        _bypass_proxy_for_local_cdp()
+        sys.exit(diagnostics.run(port=args.port, doctor=args.doctor))
+    if args.watch is None:
+        args.watch = 30
 
     if args.autostart:
         # 委托给 shouhu.py（启动项指向它，开关逻辑也放在它那边）

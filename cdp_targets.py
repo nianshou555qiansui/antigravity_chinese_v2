@@ -7,9 +7,10 @@ import time
 from urllib.parse import urlsplit
 
 import cdp_discovery
+from cdp_connection import CdpError, CdpPool
 
 
-ENGINE_SCOPE = "antigravity-main-v1"
+ENGINE_SCOPE = "antigravity-main-v2"
 MAIN_PAGE_STATE = r"""() => {
     try {
         if (window !== window.top) return {status: 'skipped', reason: 'subframe'};
@@ -50,6 +51,7 @@ MAIN_PAGE_STATE = r"""() => {
 def guarded_expression(page, engine_js, force=False):
     url = urlsplit(page["url"])
     origin = f"{url.scheme}://{url.netloc}"
+    engine = engine_js if engine_js is not None else "return {status: 'missing', confirmed: true};"
     return """(() => {
         const expectedOrigin = ORIGIN;
         const identify = STATE;
@@ -70,7 +72,7 @@ def guarded_expression(page, engine_js, force=False):
             ? {status: 'injected', confirmed: true}
             : {status: 'error', reason: 'engine-not-active', confirmed: true};
     })()""".replace("ORIGIN", json.dumps(origin)).replace("STATE", MAIN_PAGE_STATE).replace(
-        "FORCE", "true" if force else "false").replace("SCOPE", json.dumps(ENGINE_SCOPE)).replace("ENGINE", engine_js)
+        "FORCE", "true" if force else "false").replace("SCOPE", json.dumps(ENGINE_SCOPE)).replace("ENGINE", engine)
 
 
 @dataclass
@@ -103,67 +105,74 @@ class WindowReport:
         return self.successful > 0 and self.failed == 0
 
 
-async def _translate_target(page, engine_js, force, timeout):
-    import websockets
-
+async def _translate_target(page, engine_js, force, pool):
     target_id = page["id"]
-
-    async def execute():
-        async with websockets.connect(page["webSocketDebuggerUrl"], open_timeout=timeout,
-                                      close_timeout=1, max_size=1024 * 1024) as ws:
-            await ws.send(json.dumps({
-                "id": 1, "method": "Runtime.evaluate",
-                "params": {"expression": guarded_expression(page, engine_js, force),
-                           "returnByValue": True},
-            }))
-            while True:
-                reply = json.loads(await ws.recv())
-                if reply.get("id") != 1:
-                    continue
-                result = reply.get("result", {})
-                if reply.get("error") or result.get("exceptionDetails"):
-                    return TargetResult(target_id, "error", "evaluation-failed")
-                value = result.get("result", {}).get("value")
-                if not isinstance(value, dict) or value.get("status") not in {
-                        "injected", "alive", "pending", "skipped", "error"}:
-                    return TargetResult(target_id, "error", "invalid-probe-result")
-                if value["status"] in ("injected", "alive") and value.get("confirmed") is not True:
-                    return TargetResult(target_id, "error", "unconfirmed-success")
-                return TargetResult(target_id, value["status"], value.get("reason", ""),
-                                    value.get("confirmed") is True)
-
     try:
-        return await asyncio.wait_for(execute(), timeout=timeout)
-    except TimeoutError:
-        return TargetResult(target_id, "error", "target-timeout")
-    except Exception as exc:
-        return TargetResult(target_id, "error", type(exc).__name__)
+        reply = await pool.evaluate(page, guarded_expression(page, engine_js if force else None, force))
+        if not force and isinstance(reply, dict) and not reply.get("error"):
+            probe = reply.get("result")
+            remote = probe.get("result") if isinstance(probe, dict) else None
+            value = remote.get("value") if isinstance(remote, dict) else None
+            if (isinstance(value, dict) and value.get("status") == "missing"
+                    and value.get("confirmed") is True and not probe.get("exceptionDetails")):
+                # Revalidate in the full expression too: navigation may occur between requests.
+                reply = await pool.evaluate(page, guarded_expression(page, engine_js))
+    except CdpError as exc:
+        return TargetResult(target_id, "error", exc.reason)
+    result = reply.get("result") if isinstance(reply, dict) else None
+    if isinstance(reply, dict) and (reply.get("error") or isinstance(result, dict) and result.get("exceptionDetails")):
+        return TargetResult(target_id, "error", "evaluation-failed")
+    remote = result.get("result") if isinstance(result, dict) else None
+    value = remote.get("value") if isinstance(remote, dict) else None
+    if not isinstance(value, dict) or value.get("status") not in (
+            "injected", "alive", "pending", "skipped", "error"):
+        return TargetResult(target_id, "error", "invalid-probe-result")
+    if value["status"] in ("injected", "alive") and value.get("confirmed") is not True:
+        return TargetResult(target_id, "error", "unconfirmed-success")
+    reason = value.get("reason", "")
+    if reason not in ("", "subframe", "standalone-or-preview", "not-hub-preload", "bootstrap-loading",
+                      "not-antigravity-bootstrap", "hub-mount-loading", "identity-unavailable",
+                      "navigation", "engine-not-active"):
+        reason = "unknown-probe-reason"
+    status = value["status"]
+    if reason in ("identity-unavailable", "unknown-probe-reason"):
+        status = "error"
+    return TargetResult(target_id, status, reason, value.get("confirmed") is True)
 
 
-def translate_pages(pages, engine_js, force_ids=(), timeout=5):
-    async def run():
-        semaphore = asyncio.Semaphore(4)
+async def translate_pages_async(pages, engine_js, force_ids=(), *, pool):
+    semaphore = asyncio.Semaphore(4)
 
-        async def limited(page):
-            async with semaphore:
-                return await _translate_target(page, engine_js, page["id"] in force_ids, timeout)
+    async def limited(page):
+        async with semaphore:
+            return await _translate_target(page, engine_js, page["id"] in force_ids, pool)
 
-        return await asyncio.gather(*(limited(page) for page in pages))
-
-    return asyncio.run(run())
+    return await asyncio.gather(*(limited(page) for page in pages))
 
 
 def inject_windows(port, engine_js, watch_seconds=30, ready_timeout=60, only_missing=False):
     """Use one watch deadline for all targets; rediscover and revalidate every round."""
+    async def run():
+        async with CdpPool() as pool:
+            return await _inject_windows(port, engine_js, watch_seconds, ready_timeout, only_missing, pool=pool)
+
+    return asyncio.run(run())
+
+
+async def _inject_windows(port, engine_js, watch_seconds=30, ready_timeout=60, only_missing=False,
+                          *, pool, clock=None, sleep=None):
+    clock = clock or time.monotonic
+    sleep = sleep or asyncio.sleep
     report = WindowReport()
     refreshed = set()
-    ready_deadline = time.monotonic() + max(0, ready_timeout)
+    ready_deadline = clock() + max(0, ready_timeout)
     watch_deadline = None
     while True:
-        instance = cdp_discovery.find_running_instance(port)
+        instance = await asyncio.to_thread(cdp_discovery.find_running_instance, port)
+        await pool.reconcile(instance)
         pages = instance.pages
         force_ids = set() if only_missing else {page["id"] for page in pages} - refreshed
-        report.results = translate_pages(pages, engine_js, force_ids)
+        report.results = await translate_pages_async(pages, engine_js, force_ids, pool=pool)
         for result in report.results:
             if result.confirmed and result.status in ("injected", "alive"):
                 refreshed.add(result.target_id)
@@ -171,7 +180,7 @@ def inject_windows(port, engine_js, watch_seconds=30, ready_timeout=60, only_mis
                 report.injections[result.target_id] = report.injections.get(result.target_id, 0) + 1
         if report.results and all(result.status == "skipped" for result in report.results) and watch_deadline is None:
             return report
-        now = time.monotonic()
+        now = clock()
         if report.successful and watch_deadline is None:
             watch_deadline = now + max(0, watch_seconds)
         deadline = watch_deadline if watch_deadline is not None else ready_deadline
@@ -179,4 +188,4 @@ def inject_windows(port, engine_js, watch_seconds=30, ready_timeout=60, only_mis
             deadline = max(deadline, ready_deadline)
         if now >= deadline:
             return report
-        time.sleep(min(1.5, deadline - now))
+        await sleep(min(1.5, deadline - now))
