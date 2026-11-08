@@ -123,7 +123,7 @@ python audit_bundle.py --bundle path/to/main.js --version 2.29.0 --output audit-
 
 `audit_bundle.py` 不联网、不连接 CDP、不读取运行中的页面，也不修改字典。报告记录 bundle 与各字典 SHA-256，保留字符串位置和属性/直接文本证据，给出精确命中、`new-candidate`、`possible-rewrite`、`not-found-in-bundle`、动态模板、术语及占位符复核项。相似度默认至少 0.85 且只供人工审核；`not-found` 不等于废弃，工具不会自动添加、删除或发布词条。`--expect-sha256` 可在审计前锁定已确认的 bundle；报告中的 `audit-report.json` 是本机产物，不要提交。
 
-离线回归检查：`python -m unittest discover -s tests -v`（需本机有 Node.js，不会启动或修改 Antigravity）。改完词典或引擎都运行一次。
+离线回归检查：`python -m unittest discover -s tests -v`（需本机有 Node.js，不会启动或修改 Antigravity）。改完词典或引擎都运行一次。GitHub Actions 的 `Offline regression` 工作流会在 Python 3.11、3.12、3.13 上重复运行测试、语法检查和启动器编码检查，并在独立作业中安装 Chromium 运行无用户数据的浏览器夹具。
 
 旧版 `pending.json` / `misses.json` 可能仍有私人原文，新代码不会自动清理历史文件；请自行检查。新报告及原子写入临时文件均在 `.gitignore` 中，勿提交。
 
@@ -152,6 +152,8 @@ qidong_mac.sh        macOS 一键启动器
 qidong_mac.command   macOS 双击入口（调 qidong_mac.sh）
 dicts/               字典（common.json + ui_v2*.json，约 3500 条）
 tests/               离线词典、完整引擎、目标识别及多窗口回归测试
+tests/browser_fixture.html  无用户数据的异步/Shadow DOM/输入保护夹具
+audit_bundle.py      本地 bundle 版本审计器（只读，不连接 CDP）
 TODO.md              按顺序推进的优化清单及验证记录
 ```
 

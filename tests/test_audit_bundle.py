@@ -24,6 +24,17 @@ const c=/["']nope["']/g; const d=`plain \` quote`;'''
         texts = [item["text"] for item in result]
         self.assertEqual(texts, ["Don\\'t Fail", "A Button", "plain ` quote"])
 
+    def test_regex_after_control_parenthesis_is_skipped(self):
+        for keyword in ("if", "while"):
+            with self.subTest(keyword=keyword):
+                source = f'{keyword} (ok) /["\\\']secret["\\\']/.test(value); const after="After";'
+                result = audit._scan_bundle(source)
+                self.assertEqual([item["text"] for item in result], ["After"])
+
+    def test_unterminated_regex_fails_closed(self):
+        with self.assertRaisesRegex(audit.AuditError, "unterminated JavaScript regular expression"):
+            audit._scan_bundle('if (ok) /unterminated\nconst after="After";')
+
     def test_template_extraction_handles_nested_expressions_and_static_parts(self):
         source = "const a=`Hello ${user.name}!`; const b=`${`nested ${x}`} left ${fn({a: 1})} right`;"
         result = audit._scan_bundle(source)
@@ -121,6 +132,25 @@ const marker="Example @ mention & Terms of Service!";
         self.assertEqual(audit._candidate_filter("Start Settings", "string-literal"), "no-capital-letter"
                          if not any(c.isupper() for c in "Start Settings") else "")
         self.assertEqual(audit._candidate_filter("Example @ mention & Terms of Service!", "direct-text"), "")
+
+    def test_candidate_filter_withholds_email_urls_and_paths(self):
+        for value in (
+            "Contact foo@example.com for help",
+            "Read https://example.test/help for details",
+            r"Open C:\Users\Alice\notes.txt",
+            "Open ~/private/notes.txt",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(audit._candidate_filter(value, "direct-text"), "private-data")
+
+    def test_term_exception_requires_a_word_boundary(self):
+        entries = [
+            {"file": "ui.json", "key": "Agent Market", "value": "智能体市场"},
+            {"file": "ui.json", "key": "Agent Marketing", "value": "代理营销"},
+            {"file": "ui.json", "key": "Agent MarketXYZ", "value": "代理市场XYZ"},
+        ]
+        findings = audit._terminology(entries)
+        self.assertEqual([item["key"] for item in findings], ["Agent Marketing", "Agent MarketXYZ"])
 
     def test_audit_never_modifies_dictionaries(self):
         before = self.dict_file.read_bytes()

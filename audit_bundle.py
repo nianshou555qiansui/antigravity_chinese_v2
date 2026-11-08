@@ -41,6 +41,12 @@ TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9']*")
 UI_PROPERTY_RE = re.compile(r"([A-Za-z_$][\w$]*)\s*:\s*$")
 ALL_CAPS_RE = re.compile(r"[A-Z][A-Z0-9_]{2,}\Z")
 FILEISH_RE = re.compile(r"(?:^|[/\\])[^\s/\\]+\.(?:tsx?|jsx?|py|json|ya?ml|md|css|html|rs|go)\Z", re.I)
+PRIVATE_DATA_PATTERNS = (
+    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+    re.compile(r"\b(?:https?://|ftp://|www\.)[^\s]+", re.I),
+    re.compile(r"\b[A-Za-z]:[\\/][^\s]+"),
+    re.compile(r"(?:^|\s)(?:~?/|\\\\)[^\s]+"),
+)
 
 
 class AuditError(Exception):
@@ -101,7 +107,7 @@ def _regex_can_start(previous):
     return previous in {
         "", "(", "[", "{", ":", ";", ",", "=", "!", "?", "&", "|", "+", "-", "*",
         "%", "~", "return", "throw", "case", "delete", "void", "typeof", "instanceof",
-        "in", "of", "yield", "await", "else", "do",
+        "in", "of", "yield", "await", "else", "do", ")control",
     }
 
 
@@ -113,7 +119,7 @@ def _skip_regex(source, index):
         if char == "\\":
             index += 2
         elif char in "\r\n":
-            return index
+            return index, False
         elif char == "[":
             in_class = True
             index += 1
@@ -124,10 +130,10 @@ def _skip_regex(source, index):
             index += 1
             while index < len(source) and source[index].isalpha():
                 index += 1
-            return index
+            return index, True
         else:
             index += 1
-    return index
+    return index, False
 
 
 def _skip_template(source, index):
@@ -152,6 +158,8 @@ def _skip_template(source, index):
 def _skip_expression(source, index):
     depth = 1
     previous = "{"
+    paren_context = []
+    control_paren_keywords = {"if", "while", "for", "with", "switch", "catch"}
     while index < len(source) and depth:
         char = source[index]
         if char in "'\"":
@@ -172,7 +180,9 @@ def _skip_expression(source, index):
                 raise AuditError("unterminated JavaScript block comment")
             index = end + 2
         elif char == "/" and _regex_can_start(previous):
-            index = _skip_regex(source, index)
+            index, closed = _skip_regex(source, index)
+            if not closed:
+                raise AuditError("unterminated JavaScript regular expression")
             previous = "value"
         elif char == "{":
             depth += 1
@@ -183,9 +193,25 @@ def _skip_expression(source, index):
             previous = "value"
             index += 1
         else:
-            if not char.isspace():
+            if char.isalpha() or char in "_$":
+                end = index + 1
+                while end < len(source) and (source[end].isalnum() or source[end] in "_$"):
+                    end += 1
+                previous = source[index:end]
+                index = end
+            elif char == "(":
+                paren_context.append(previous in control_paren_keywords)
                 previous = char
-            index += 1
+                index += 1
+            elif char == ")":
+                is_control = paren_context.pop() if paren_context else False
+                previous = ")control" if is_control else char
+                index += 1
+            elif not char.isspace():
+                previous = char
+                index += 1
+            else:
+                index += 1
     return index, previous, depth == 0
 
 
@@ -251,6 +277,8 @@ def _scan_bundle(source):
     line_starts.extend(index + 1 for index, char in enumerate(source) if char == "\n")
     index = 0
     previous = ""
+    paren_context = []
+    control_paren_keywords = {"if", "while", "for", "with", "switch", "catch"}
     while index < len(source):
         char = source[index]
         if char.isspace():
@@ -306,7 +334,9 @@ def _scan_bundle(source):
             index = end
             previous = "value"
         elif char == "/" and _regex_can_start(previous):
-            index = _skip_regex(source, index)
+            index, closed = _skip_regex(source, index)
+            if not closed:
+                raise AuditError("unterminated JavaScript regular expression")
             previous = "value"
         else:
             if char.isalpha() or char in "_$":
@@ -315,6 +345,18 @@ def _scan_bundle(source):
                     end += 1
                 previous = source[index:end]
                 index = end
+            elif char == "(":
+                # A regex may begin after the closing parenthesis of a control
+                # statement (`if (ok) /.../`), but not after ordinary grouping
+                # or a call (`(value) / divisor`). Keep that small bit of
+                # context instead of treating every ')' as regex-friendly.
+                paren_context.append(previous in control_paren_keywords)
+                previous = char
+                index += 1
+            elif char == ")":
+                is_control = paren_context.pop() if paren_context else False
+                previous = ")control" if is_control else char
+                index += 1
             else:
                 previous = char
                 index += 1
@@ -378,6 +420,8 @@ def _candidate_filter(text, evidence):
         return "outside-length-range"
     if not re.search(r"[A-Za-z]{2}", value) or re.search(r"[\u3400-\u9fff]", value):
         return "not-English-ui-text"
+    if any(pattern.search(value) for pattern in PRIVATE_DATA_PATTERNS):
+        return "private-data"
     if ALL_CAPS_RE.fullmatch(value):
         return "enum-or-constant"
     if FILEISH_RE.search(value):
@@ -436,7 +480,7 @@ def _terminology(entries):
             if not matches:
                 continue
             eligible = [match for match in matches if not any(
-                re.match(re.escape(exception) + r"(?![A-Za-z])", source[match.start():], re.IGNORECASE)
+                re.match(re.escape(exception) + r"(?![A-Za-z0-9_])", source[match.start():], re.IGNORECASE)
                 for exception in TERM_EXCEPTIONS)]
             translated_count = len(re.findall(re.escape(target_term), translation))
             if not eligible or translated_count >= len(eligible):

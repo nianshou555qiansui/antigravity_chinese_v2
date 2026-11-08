@@ -2,18 +2,19 @@
 
 ## Project Structure & Module Organization
 
-Root sources include `hanhua_v2.py` (engine), `cdp_*.py` (CDP), `diagnostics.py` (read-only checks), `guard_runtime.py` (watchdog states), `caiji.py` (statistics), `privacy_policy.py` (DOM rules), and `audit_bundle.py` (local bundle audit without CDP/network). `shouhu.py` is the Windows watchdog. Dictionaries are in `dicts/`, tests in `tests/`, assets in `docs/`. See `CLAUDE.md`.
+Root sources include `hanhua_v2.py` (engine), `cdp_*.py` (CDP), `diagnostics.py`, `guard_runtime.py`, `caiji.py`, `privacy_policy.py`, and `audit_bundle.py` (offline bundle audit). `shouhu.py` is the Windows watchdog. Dictionaries are in `dicts/`, tests in `tests/`, assets in `docs/`. See `CLAUDE.md`.
 
 ## Build, Test, and Development Commands
 
 Requires Python 3.10+ and Antigravity; tests need Python 3.11+. Use `python3` on macOS. No build.
 
-- `python -m pip install -r requirements.txt`: install the `websockets` dependency.
+- `python -m pip install -r requirements.txt`: install `websockets`.
 - `python hanhua_v2.py`: discover the installation, launch, inject, and briefly watch.
 - `python hanhua_v2.py --no-launch --watch 0`: reinject into an existing debug-enabled instance.
-- `python hanhua_v2.py --doctor`: check dictionaries, windows, and engine snapshots without changing the app.
+- `python hanhua_v2.py --doctor`: check dictionaries, windows, and engine snapshots read-only.
 - `python caiji.py`: export source counts only; `--include-ui-text` explicitly exports audited static labels; `--misses` exports numeric engine misses.
-- `python audit_bundle.py --bundle path/to/main.js --version 2.29.0 --output audit-report.json`: hash a local bundle and produce review-only candidates; never downloads or edits dictionaries.
+- `python audit_bundle.py --bundle path/to/main.js --version 2.29.0 --output audit-report.json`: hash a local bundle and produce review candidates; never edits dictionaries.
+- `python -B -m unittest tests.test_browser_fixture -v`: run the synthetic browser fixture when Playwright/Chromium are installed; otherwise it skips.
 
 ## Coding Style & Naming Conventions
 

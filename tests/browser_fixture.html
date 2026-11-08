@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Translation engine browser fixture</title></head>
+<body>
+  <main id="fixture-root">
+    <p id="static-text">Hello</p>
+    <button id="save-button" aria-label="Save">Save</button>
+    <button id="late-button">Late action</button>
+    <input id="safe-input" placeholder="File" title="Save" value="typed sample">
+    <div id="protected-message" data-testid="user-message-content">Hello</div>
+    <div id="terminal-message" class="terminal">Hello</div>
+    <div id="shadow-host"></div>
+    <div id="dynamic-root"></div>
+  </main>
+  <script>
+    const initialHost = document.querySelector('#shadow-host');
+    const initialShadow = initialHost.attachShadow({mode: 'open'});
+    initialShadow.innerHTML = '<span id="shadow-text">Shadow Label</span>';
+  </script>
+</body>
+</html>

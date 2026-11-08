@@ -1,0 +1,2 @@
+# Optional browser regression dependency. CI installs this file and Chromium.
+playwright>=1.40,<2
