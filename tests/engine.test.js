@@ -10,6 +10,7 @@ process.stdin.on("end", () => {
     try {
         const payload = JSON.parse(chunks.join(""));
         run(payload);
+        runGuardTests(payload);
         process.stdout.write(`ok: ${Object.keys(payload.dictionary).length} entries\n`);
     } catch (error) {
         console.error(error.stack || error);
@@ -156,8 +157,8 @@ function makeHarness(hasBody = true) {
         clearInterval: id => intervals.delete(id),
     });
     return {
-        window, document, observers, timers, intervals, ElementStub, TextStub, FragmentStub,
-        inject(source) { vm.runInContext(source, context, { timeout: 20000 }); },
+        window, document, context, observers, timers, intervals, ElementStub, TextStub, FragmentStub,
+        inject(source) { return vm.runInContext(source, context, { timeout: 20000 }); },
         tick(ms) {
             for (const timer of timers.splice(0).filter(item => item.ms <= ms)) timer.fn();
             for (const interval of [...intervals.values()]) if (interval.ms <= ms) interval.fn();
@@ -329,4 +330,93 @@ function run({ engine, dictionary, normSamples }) {
     const timerText = addText(missedEvent.document.body, "File", "span", {}, missedEvent).text;
     missedEvent.tick(3000);
     assert.equal(timerText.nodeValue, sample("File"), "late body timer fallback");
+}
+
+function hubHarness() {
+    const h = makeHarness();
+    h.window.top = h.window;
+    h.window.electronNative = { minimize() {}, maximize() {} };
+    h.window.nativeStorage = { getItems() {} };
+    h.window.__APP_CONFIG__ = { productName: "antigravity", appVersion: "2.29.0" };
+    h.document.readyState = "complete";
+    h.root = { childElementCount: 1 };
+    h.document.getElementById = name => name === "root" ? h.root : null;
+    h.document.scripts = [{ src: "https://127.0.0.1:7555/main.js?version=1" }];
+    h.context.URL = URL;
+    h.context.location = { origin: "https://127.0.0.1:7555", pathname: "/", href: "https://127.0.0.1:7555/" };
+    const container = h.document.body.appendChild(new h.ElementStub());
+    h.text = container.appendChild(new h.TextStub("File"));
+    return h;
+}
+
+function runGuardTests({ guarded, forced, dictionary }) {
+    const standalonePaths = [
+        "/artifact", "/artifact/abc", "/artifact-preview", "/artifactXXX",
+        "/terminal-standalone/", "/terminal-standalone-test",
+        "/settings-standalone", "/settings-standalone2", "/static/artifacts/a",
+    ];
+    for (const pathname of ["/", "/c/example", "/history", "/sidecars", "/customizations/plugins", "/view/example"]) {
+        const h = hubHarness();
+        h.context.location.pathname = pathname;
+        assert.equal(h.inject(guarded).status, "injected", `main route ${pathname}`);
+        assert.equal(h.text.nodeValue, dictionary.File);
+        assert.equal(h.inject(guarded).status, "alive", "already running without duplicate injection");
+        assert.equal(h.observers.length, 1);
+        assert.equal(h.inject(forced).status, "injected", "explicit dictionary refresh");
+        assert.equal(h.observers[0].roots.size, 0);
+        assert.equal(h.intervals.size, 1);
+    }
+    const rejected = [
+        h => { h.window.top = {}; },
+        h => { h.context.location.origin = "https://example.com"; },
+        h => { h.window.electronNative = undefined; },
+        h => { h.window.electronNative.minimize = "not-a-function"; },
+        h => { h.window.nativeStorage = undefined; },
+        h => { h.window.__APP_CONFIG__.productName = "another-product"; },
+        h => { h.window.__APP_CONFIG__ = undefined; },
+        ...standalonePaths.map(
+            path => h => { h.context.location.pathname = path; }),
+    ];
+    for (const change of rejected) {
+        const h = hubHarness();
+        change(h);
+        assert.equal(h.inject(forced).status, "skipped");
+        assert.equal(h.text.nodeValue, "File", "rejected pages remain unchanged");
+        assert.equal(h.observers.length, 0, "no observer in rejected page");
+        assert.equal(h.window.__ag_hanhua_engine__, undefined);
+    }
+    for (const change of [
+        h => { h.document.readyState = "loading"; h.window.__APP_CONFIG__ = undefined; },
+        h => { h.root = null; },
+        h => { h.root.childElementCount = 0; },
+        h => { h.document.scripts = [{ src: "https://example.com/main.js" }]; },
+    ]) {
+        const h = hubHarness();
+        change(h);
+        assert.equal(h.inject(forced).status, "pending", "wait without injecting incomplete shells");
+        assert.equal(h.observers.length, 0);
+        assert.equal(h.text.nodeValue, "File");
+    }
+    const loading = hubHarness();
+    loading.root.childElementCount = 0;
+    assert.equal(loading.inject(guarded).status, "pending");
+    loading.root.childElementCount = 1;
+    assert.equal(loading.inject(guarded).status, "injected");
+
+    for (const change of [
+        ...standalonePaths.map(path => h => { h.context.location.pathname = path; }),
+        h => { h.context.location.origin = "https://example.com"; },
+        h => { h.window.electronNative = undefined; },
+    ]) {
+        const h = hubHarness();
+        assert.equal(h.inject(guarded).status, "injected");
+        change(h);
+        h.text.nodeValue = "Save";
+        assert.equal(h.text.nodeValue, "Save", "same-document identity change stops translation");
+        h.tick(5000);
+        assert.equal(h.text.nodeValue, "Save", "delayed timers remain stopped");
+        assert.equal(h.observers[0].roots.size, 0);
+        assert.equal(h.intervals.size, 0);
+        assert.equal(h.window.__ag_hanhua_engine__.active(), false);
+    }
 }

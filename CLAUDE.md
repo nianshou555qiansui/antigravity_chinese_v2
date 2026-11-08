@@ -40,7 +40,7 @@ python caiji.py --misses                 # 拉引擎未命中日志 → misses.j
 
 ```bash
 python -m unittest discover -s tests -v
-python -c "import ast,io;[ast.parse(io.open(f,encoding='utf-8').read()) for f in ['hanhua_v2.py','caiji.py','shouhu.py']]"
+python -c "import ast,io;[ast.parse(io.open(f,encoding='utf-8').read()) for f in ['hanhua_v2.py','cdp_discovery.py','cdp_targets.py','caiji.py','shouhu.py']]"
 python -c "import json,io,os;[json.load(io.open('dicts/'+f,encoding='utf-8')) for f in os.listdir('dicts') if f.endswith('.json')]"
 # 引擎 JS 必须单独校验：它是 Python 字符串拼出来的，语法错在注入时才会暴露
 # 注意别写 '/tmp/e.js'：Windows 原生 Python 看不见 Git Bash 的 /tmp，会 FileNotFoundError
@@ -61,10 +61,12 @@ python -c "b=open('qidong.bat','rb').read();assert not [x for x in b if x>127],'
 hanhua_v2.py     主脚本：加载字典 → 生成引擎 JS → 启动 Antigravity → CDP 注入 → 守护
   ├ load_dictionary()   合并 dicts/*.json，对 key 做 normalize_text()
   ├ build_engine_js()   把字典嵌进一段 IIFE 模板字符串（整个翻译引擎都在这里面）
-  ├ wait_for_debug_port() 轮询 /json 找主界面页
-  └ cdp_inject()        等就绪 → 注册 document-start 脚本 → 注入 → 守护补注
+  └ prepare_instance() 复用实例或安全启动，关闭应用必须显式确认
 caiji.py         界面文本采集器（CDP 抓页面英文 → pending.json；--misses 拉取引擎未命中日志 → misses.json）
-cdp_discovery.py  进程归属、回环端口及产品校验；显式确认后的定向关闭
+cdp_discovery.py  进程归属、回环端口及产品校验；列出候选 target，显式确认后的定向关闭
+cdp_targets.py    同一次求值内验证主界面并注入；逐窗口超时隔离，共享观察期
+  ├ guarded_expression() 当前 origin + Hub 特征校验，通过后才能执行引擎
+  └ inject_windows()     每轮重发现窗口，补注新窗口/重载页面，汇总当前结果
 shouhu.py        可选守护进程（仅 Windows）：发现已有调试端口→补注入，不启动/关闭应用
 qidong.bat           Windows 一键启动器（只调 hanhua_v2.py，保留错误退出码）
 qidong_mac.sh        macOS 一键启动器（只调 hanhua_v2.py，保留错误退出码）
@@ -94,37 +96,55 @@ Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只�
 不能用按映像名关闭全部进程的 `/IM` / `killall`。重启前先检查目标端口、可执行文件和进程快照；
 确认期间新增进程、关闭失败或仍有进程存活时，不启动新实例。启动器不再自行杀进程，失败不能打印 Done。
 
-`wait_for_debug_port()` 每次重试都重新验证进程归属、产品 User-Agent 和本地 WebSocket 地址。
-当前优先精确标题 Antigravity，多本地页面有歧义则拒绝；完整主界面特征识别与多窗口支持见 TODO 第 2 项。
+### 主界面身份与多窗口
+
+`candidate_pages()` 仅返回可安全探测的候选：本地 HTTP(S)、CDP 类型 `page`、与目标 ID 一致的
+`/devtools/page/<id>` WebSocket，连接地址固定到已验证的监听端点。候选不等于获准翻译；
+不能按标题或列表顺序选主窗口，同一调试端口的所有候选都须逐个验证。
+
+`guarded_expression()` 在同一次 `Runtime.evaluate` 中检查身份并执行引擎，避免检查后页面已导航：
+- 顶层窗口，当前 origin 与候选一致。
+- Hub 原生桥：`electronNative.minimize/maximize`、`nativeStorage.getItems` 都是函数；只检查，不调用 IPC。
+- `__APP_CONFIG__.productName` 为 `antigravity`（忽略大小写），`appVersion` 为字符串；不读取/导出整个配置或 CSRF 值。
+- `#root` 已挂载子元素、存在同源 `/main.js`，文档不在 `loading` 状态；挂载未完成则等待，不强行注入。
+- 路径以 `/artifact`、`/terminal-standalone`、`/settings-standalone` 开头或属于 `/static` 时跳过，
+  前三项与官方 standalone 路由的前缀判断一致。合法主界面 SPA 路由如 `/c/*`、`/history`、`/view/*` 不应被误拒。
+
+外部网页、加载壳、独立预览等不得因标题含 Antigravity 就获准翻译。真实指纹依据 2.29.0 Windows
+安装包和运行中主窗口核验；新版本改变特征时宁可拒绝并重新审计，不退回宽松匹配。
 
 ### 注入失败的显式上报
 
 `Runtime.evaluate` 的 JS 异常**不在**顶层 `error` 字段里，而在 `result.exceptionDetails`。
-`main()` 必须显式查它：不查的话引擎脚本抛错时脚本照样打印「[成功]」，制造
-「注入成功但界面全英文」的假象，把排查引向错误方向（见「排查经验」第一条）。
+`_translate_target()` 必须同时查两者。只有显式 `injected/alive` 且 `confirmed: true` 才算成功，
+不是“没有异常”就算成功。跳过、未就绪、断线、无效返回值都不能报已注入。
+`WindowReport` 按最后一轮结果判断：关闭的窗口不残留失败，恢复的窗口不残留旧错误；
+至少一个主窗口成功且没有未完成目标才返回成功。日志只输出数量和原因码，不输出标题、URL 或页面内容。
 
 ### 注入时机 —— 冷启动能否成功的关键
 
-**端口开放 ≠ 界面就绪。** 冷启动时 CDP 端口比 SPA 挂载早得多，此时页面 `title` 还是空的，
-直接注入会被随后的加载/导航**整个冲掉**，现象是脚本打印「[成功]」但界面全是英文。
-`cdp_inject()` 因此分三步：
+**端口开放 ≠ 界面就绪。** 不能用页面标题或 `body.innerText` 字数判断身份/就绪。
+`inject_windows()` 每轮重新核实端口归属、枚举候选并运行上述检查，轮间最多等待 1.5 秒。
+正常启动对各目标首次成功前强制刷新引擎，以加载新词典；之后只为引擎缺失的页面补注。
 
-1. **等就绪** —— 轮询 `document.readyState === 'complete'` 且 `body.innerText` 超过 100 字符
-2. **注册 document-start 脚本** —— `Page.addScriptToEvaluateOnNewDocument`。
-   这个注册**只在 CDP 连接存活期间有效**，连接一断浏览器就清掉它，所以它只是加速手段，不是保险
-3. **守护补注** —— 每 1.5 秒查 `window.__ag_hanhua_engine__`，被冲掉立刻补注，默认 30 秒。
-   这一步才是真正的保险
+所有窗口共用观察截止时间，从首个成功窗口起默认 30 秒；启动未就绪/暂时错误在初始 60 秒内重试，
+`--watch 0` 也保留初始等待。目标关闭、重建、导航后都按新一轮结果处理，不复用旧身份。
+短连接最多并发 4 个，每个有 5 秒超时；不得用整批超时反复取消队尾，否则前 4 个挂起页面会饿死后面的主窗口。
+在途探测可能让总耗时超过观察秒数。连接复用和退避留给 TODO 第 3 项。
 
-`main()` 外层还包了 3 次重试：早期 page target 可能在加载途中被丢弃，WebSocket 会直接断开。
+**不注册 `Page.addScriptToEvaluateOnNewDocument`**：已验证的 target 以后也可能导航到用户网页，
+不能继承自动注入。重载由下一轮重新验证后补注；同文档变化由引擎 `ensureTrusted()` 在观察器、
+定时器和 Shadow DOM 入口复核，失信后永久停止该引擎。观察期结束后的新窗口/重载须重跑或用守护。
 
 ### 守护进程（shouhu.py，可选，仅 Windows）
 
-`--autostart on` 建登录启动项，守护每轮结束后等待 2 秒。自动发现/验证端口后复用 `cdp_inject()`；
+`--autostart on` 建登录启动项，守护每轮结束后等待 2 秒。自动发现/验证端口后复用
+`inject_windows(watch_seconds=0, ready_timeout=0, only_missing=True)`，只补缺失引擎，不重复替换健康引擎；
 没有端口、页面未就绪、探测或注入失败都只等待/记录状态，不启动、关闭或重启 Antigravity。
 旧版的自动 taskkill、冷却时间和失败次数安全阀已删除；不要重新引入静默强制重启。
 
 - pythonw 子进程必须带 `CREATE_NO_WINDOW`，避免闪黑窗。
-- 状态变化才记日志，探测失败不是“进程不存在”；连接复用和请求超时后续按 TODO 第 3 项处理。
+- 状态变化才记日志，探测失败不是“进程不存在”；基础逐窗口超时已实现，连接复用、退避和诊断按 TODO 第 3 项处理。
 - 旧守护进程不会热更新，升级后需 `--autostart off` 再 `--autostart on`，重新登录或手动启动新守护。
 - `shouhu.log` / `shouhu.lock` 不提交；停止守护不代表停止 Antigravity。
 
@@ -176,11 +196,11 @@ Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只�
 闭包捕获会让每次重复注入都永久持有一份旧引擎（连同整份字典约 0.6 MB），
 而守护期会反复补注，泄漏不断叠加。当前实现用 `__ag_hooked__` 标记只劫持一次，
 回调里读 `window.__ag_hanhua_engine__.observe`。实测连注 5 次仅增长 561 KB（≈ 一份字典）。
-旧引擎 disconnect 时还要置 `stopped` 标记：document-start 路径下 `startEngine` 尚未成功，
-迟到的重试定时器会把刚断开的 observer 重新挂回 body，新旧引擎叠加成双重翻译。
+旧引擎 disconnect 或主界面身份失效时还要置 `stopped` 标记：迟到的重试定时器不能把刚断开的
+observer 重新挂回 body。`active()` 必须复核身份，不能仅凭全局标记存在判断引擎可用。
 
-另外 `startEngine()` 必须可重试：document-start 注入路径下 `document.body` 还不存在，
-只跑一次会永远挂不上 observer。当前靠 `started` 标记 + `DOMContentLoaded` + 3 秒定时器兜底。
+`startEngine()` 保留 body 延迟出现的防御性重试：靠 `started` 标记 + `DOMContentLoaded` +
+3 秒定时器兜底。生产入口必须经过 `guarded_expression()`；裸引擎的无 guard 模式只用于离线测试。
 
 **属性翻译**：`TRANSLATABLE_ATTRS` 覆盖 `placeholder`/`title`/`aria-label`/`alt`/`data-title`/
 `data-tooltip-content` 等。属性**不查禁区**——它是 UI 元数据而非用户输入，查了会漏翻输入框提示。
@@ -304,8 +324,9 @@ issue 就泄露了，`_mask_proxy()` 就是干这个的。
 
 ## 排查经验
 
-- **「注入成功但界面全英文」= 注入太早。** 看 `[连接] 页面:` 那行，**title 为空**就是铁证。
-  验证：注入几秒后查 `window.__ag_hanhua_engine__`，是 `false` 说明被冲掉了。
+- **「注入成功但界面全英文」先查重载与目标识别。** 在已确认的主窗口检查
+  `window.__ag_hanhua_engine__?.active?.()`；只看标记存在或标题都不够。观察期已结束时重跑
+  `--no-launch`；看到 `hub-mount-loading` 则等挂载稳定，不能移除身份检查来强行注入。
 - **「翻译了又变回英文」≠ 没匹配上**，通常是 React 重渲染覆盖，查 `characterData` 是否在监听。
 - **整句在字典里却不翻**，先查是不是被 `isProtected` 或禁区规则整段拦掉了。
 - **tooltip 只在悬停时才进 DOM**，静态扫描抓不到它的文案，要补 tooltip 翻译得在悬停时采集。

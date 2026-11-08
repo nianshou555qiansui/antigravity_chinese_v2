@@ -19,6 +19,7 @@ import argparse
 import subprocess
 import http.client
 import cdp_discovery
+import cdp_targets
 
 # ★★★ 配置 ★★★
 DEFAULT_PORT = 9333
@@ -115,6 +116,8 @@ def build_engine_js(dict_map):
 
     js_source = """\
 (() => {
+    const trustedPage = typeof __agTrustedPage === 'function' ? __agTrustedPage : () => true;
+    if (!trustedPage()) return;
     // 汉化翻译引擎（CDP 注入版，基于容器回溯隔离）
     // 防重复注入：若已注入过（有全局标记），先断开旧 observer 再重建，避免叠加
     if (window.__ag_hanhua_engine__) {
@@ -414,6 +417,7 @@ def build_engine_js(dict_map):
     // characterData 必须监听：React 重渲染会直接改写文本节点，不听就会被改回英文。
     // 自身写入不会造成循环——lastSeen 记录了我们写入的值，再次看到会直接跳过。
     const observer = new MutationObserver(mutations => {
+        if (!ensureTrusted()) return;
         for (const m of mutations) {
             if (m.type === 'childList') {
                 for (const n of m.addedNodes) translateNode(n);
@@ -456,15 +460,21 @@ def build_engine_js(dict_map):
         }
     }
 
-    // 启动：挂 observer + 首次全量翻译。
-    // 必须能重试——document-start 注入（Page.addScriptToEvaluateOnNewDocument）时
-    // document.body 还不存在，只跑一次就会永远挂不上 observer。
+    // 启动：挂 observer + 首次全量翻译；保留 body 延迟出现的防御性重试。
     let started = false;
-    // 旧引擎 disconnect 后必须完全停摆：没有 stopped，迟到的 startEngine 重试
-    // 会把刚断开的 observer 重新挂回 body，与补注的新引擎叠加成双重翻译
+    // 旧引擎或已离开主界面的引擎必须完全停止，迟到的重试不能重新挂载。
     let stopped = false;
+    let timerId = null;
+    function ensureTrusted() {
+        if (stopped) return false;
+        if (trustedPage()) return true;
+        stopped = true;
+        observer.disconnect();
+        clearInterval(timerId);
+        return false;
+    }
     const startEngine = () => {
-        if (started || stopped || !document.body) return;
+        if (!ensureTrusted() || started || !document.body) return;
         started = true;
         observeRoot(document.body);
         translateNode(document.body);
@@ -491,19 +501,21 @@ def build_engine_js(dict_map):
         document.addEventListener('DOMContentLoaded', startEngine, { once: true });
     }
     setTimeout(startEngine, 300);
-    setTimeout(() => { if (stopped || !document.body) return; translateNode(document.body); rescanAttributes(); }, 2000);
-    setTimeout(() => { if (stopped || !document.body) return; translateNode(document.body); rescanAttributes(); }, 5000);
+    setTimeout(() => { if (!ensureTrusted() || !document.body) return; translateNode(document.body); rescanAttributes(); }, 2000);
+    setTimeout(() => { if (!ensureTrusted() || !document.body) return; translateNode(document.body); rescanAttributes(); }, 5000);
     // 周期性全量重扫：兜住 React 重渲染、下拉菜单弹出等 observer 可能漏掉的情况。
     // 同时兜住 startEngine——body 若迟迟不出现，这里会一直重试直到挂上 observer。
-    const timerId = setInterval(() => {
-        if (stopped) return;
+    timerId = setInterval(() => {
+        if (!ensureTrusted()) return;
         startEngine();
         if (document.body) translateNode(document.body);
         rescanAttributes();
     }, 3000);
 
     window.__ag_hanhua_engine__ = {
-        observe: observeRoot,
+        scope: 'antigravity-main-v1',
+        active: () => ensureTrusted() && started,
+        observe: (root) => { if (ensureTrusted()) observeRoot(root); },
         misses: misses,
         disconnect: () => {
             stopped = true;
@@ -547,115 +559,6 @@ def http_json(host, port, path):
         return json.loads(body)
     finally:
         conn.close()
-
-
-def wait_for_debug_port(port, timeout=60):
-    """等待已核实进程归属和产品身份的 CDP 页面；重试时也重新验证。"""
-    deadline = time.monotonic() + timeout
-    while True:
-        instance = cdp_discovery.find_running_instance(port)
-        if instance.page:
-            return instance.page
-        if time.monotonic() >= deadline:
-            return None
-        time.sleep(0.5)
-
-
-def cdp_inject(page, engine_js, watch_seconds=30):
-    """通过 CDP WebSocket 注入翻译引擎。用 websockets 库（本机已装）。
-
-    冷启动（qidong.bat）时页面还在加载，直接注入会被随后的加载/导航冲掉
-    （现象：注入报成功但界面全英文，页面 title 为空）。因此分三步：
-
-    1. 等待页面真正就绪（readyState=complete 且 body 有实际文案）
-    2. Page.addScriptToEvaluateOnNewDocument —— 本连接存活期间，
-       页面刷新/导航会在 document-start 自动重新注入
-    3. 守护轮询 window.__ag_hanhua_engine__，被冲掉就立刻补注
-
-    注意：第 2 步的注册只在 CDP 连接存活期间有效，连接一断浏览器就清掉它，
-    所以第 3 步的守护窗口才是冷启动能否成功的关键。
-    """
-    import asyncio
-    import websockets
-
-    ws_url = page['webSocketDebuggerUrl']
-
-    async def run():
-        async with websockets.connect(ws_url, max_size=64 * 1024 * 1024) as ws:
-            counter = {'id': 0}
-
-            async def call(method, params=None):
-                counter['id'] += 1
-                mid = counter['id']
-                await ws.send(json.dumps({"id": mid, "method": method,
-                                          "params": params or {}}))
-                while True:
-                    msg = json.loads(await ws.recv())
-                    # CDP 会推送事件（无 id），只认自己这条请求的回包
-                    if msg.get('id') == mid:
-                        return msg
-
-            async def evaluate(expr):
-                return await call("Runtime.evaluate", {
-                    "expression": expr,
-                    "returnByValue": True,
-                    "awaitPromise": True,
-                })
-
-            def value_of(resp):
-                try:
-                    return resp['result']['result']['value']
-                except Exception:
-                    return None
-
-            # 1) 等界面真正挂载出来
-            READY_EXPR = ("(() => { try { return document.readyState === 'complete'"
-                          " && !!document.body"
-                          " && document.body.innerText.trim().length > 100;"
-                          " } catch (e) { return false; } })()")
-            print("[等待] 等待界面加载完成（SPA 挂载）...")
-            deadline = time.time() + 60
-            ready = False
-            while time.time() < deadline:
-                if value_of(await evaluate(READY_EXPR)) is True:
-                    ready = True
-                    break
-                await asyncio.sleep(0.5)
-            if not ready:
-                print("[警告] 界面 60 秒内未就绪，仍尝试注入")
-
-            # 2) 注册 document-start 脚本，覆盖后续刷新/导航
-            await call("Page.enable")
-            await call("Page.addScriptToEvaluateOnNewDocument", {"source": engine_js})
-
-            # 3) 当前文档立即注入
-            resp = await evaluate(engine_js)
-            if resp.get('error') or resp.get('result', {}).get('exceptionDetails'):
-                return resp
-
-            # 4) 守护：被页面重载冲掉就补注
-            if watch_seconds > 0:
-                print(f"[守护] 监控 {watch_seconds} 秒，页面重载会自动补注...")
-                reinjects = 0
-                end = time.time() + watch_seconds
-                while time.time() < end:
-                    await asyncio.sleep(1.5)
-                    alive = value_of(await evaluate("!!window.__ag_hanhua_engine__"))
-                    if alive is not True:
-                        r = await evaluate(engine_js)
-                        if r.get('error') or r.get('result', {}).get('exceptionDetails'):
-                            # 不计数；1.5 秒后的探活发现仍未存活会自动再试
-                            print("[守护] 补注未成功，等待下轮重试")
-                        else:
-                            reinjects += 1
-                            print(f"[守护] 检测到引擎丢失，已补注（第 {reinjects} 次）")
-                if reinjects:
-                    print(f"[守护] 结束，共补注 {reinjects} 次")
-                else:
-                    print("[守护] 结束，引擎全程存活")
-            return resp
-
-    return asyncio.run(run())
 
 
 def launch_antigravity(exe, port):
@@ -769,57 +672,27 @@ def main():
         print("[错误] 未加载到任何字典，请检查 dicts/ 目录")
         sys.exit(1)
 
-    # 2. 优先复用；任何关闭应用的行为都需显式选项和确认。
+    # 只翻译经逐窗口身份检查的主界面；观察期内持续发现新窗口。
     try:
-        port, page = prepare_instance(args)
-        print(f"[等待] 等待 CDP 端口 {port} 就绪...")
-        page = page or wait_for_debug_port(port, timeout=60)
+        port, _ = prepare_instance(args)
+        print(f"[连接] 已验证调试端口 {port}，正在识别所有主界面窗口...")
+        if args.watch > 0:
+            print(f"[观察] 首个窗口成功后继续观察 {args.watch} 秒，为新窗口和重载页面补注。")
+        report = cdp_targets.inject_windows(
+            port, build_engine_js(dict_map), watch_seconds=args.watch)
     except cdp_discovery.DiscoveryError as exc:
         print(f"[错误] {exc}")
         sys.exit(1)
-    if not page:
-        print("[错误] 超时未等到调试端口。请确认 Antigravity 以 --remote-debugging-port 启动。")
+    reinjections = sum(max(0, count - 1) for count in report.injections.values())
+    print(f"[窗口] 成功 {report.successful}；跳过 {report.skipped}；未完成 {report.failed}；补注 {reinjections}")
+    for result in report.results:
+        if result.status in ("error", "pending"):
+            print(f"[窗口未完成] {result.reason}")
+    if not report.ok:
+        print("[错误] 没有已确认且注入成功的主窗口，或部分窗口未完成；未强行注入。")
         sys.exit(1)
-    print(f"[连接] 页面: {page.get('title')}  url: {page.get('url')}")
-
-    # 4. 生成引擎并注入
-    print("[生成] 编译翻译引擎...")
-    engine_js = build_engine_js(dict_map)
-    print("[注入] 通过 CDP 注入翻译引擎...")
-
-    # 冷启动时最早出现的那个 page target 可能在加载途中被丢弃，
-    # 连接会直接断掉。重新探测页面再试一次，避免整个脚本崩掉。
-    resp = None
-    for attempt in range(3):
-        try:
-            resp = cdp_inject(page, engine_js, watch_seconds=args.watch)
-            break
-        except Exception as e:
-            print(f"[重试] 连接中断（{type(e).__name__}），重新探测页面... ({attempt + 1}/3)")
-            time.sleep(2)
-            try:
-                page = wait_for_debug_port(port, timeout=30)
-            except cdp_discovery.DiscoveryError as discovery_error:
-                print(f"[错误] {discovery_error}")
-                sys.exit(1)
-            if not page:
-                print("[错误] 页面已消失，Antigravity 可能已退出。")
-                sys.exit(1)
-    if resp is None:
-        print("[错误] 多次重试后仍无法注入。")
-        sys.exit(1)
-    if resp.get('error'):
-        print(f"[错误] 注入失败: {resp['error']}")
-        sys.exit(1)
-    # Runtime.evaluate 的 JS 异常不在顶层 error 里，在 result.exceptionDetails——
-    # 不查它，引擎抛错时也会打印「成功」，制造「注入成功但界面全英文」的假象
-    exc = resp.get('result', {}).get('exceptionDetails')
-    if exc:
-        detail = (exc.get('exception') or {}).get('description') or exc.get('text') or str(exc)
-        print(f"[错误] 引擎脚本执行异常: {detail}")
-        sys.exit(1)
-    print("[成功] 翻译引擎已注入！侧边栏等界面元素将显示中文。")
-    print("[提示] 若新增字典条目，退出后重新运行本脚本即可。")
+    print("[成功] 所有当前已确认的主界面窗口均已注入；其他网页未处理。")
+    print("[提示] 观察期结束后新开的窗口，请重跑启动器或使用安全守护。")
 
 
 if __name__ == "__main__":

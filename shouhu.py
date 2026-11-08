@@ -1,6 +1,5 @@
 """可选的安全注入守护：只复用已验证的调试端口，不启动或重启应用。"""
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -73,43 +72,17 @@ def release_lock():
         pass
 
 
-def engine_alive(page):
-    """查页面里 window.__ag_hanhua_engine__ 是否存活。任何异常按不存活处理。"""
-    import asyncio
-    import websockets
-
-    async def run():
-        async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=3,
-                                      max_size=1024 * 1024) as ws:
-            await ws.send(json.dumps({
-                'id': 1, 'method': 'Runtime.evaluate',
-                'params': {'expression': '!!window.__ag_hanhua_engine__',
-                           'returnByValue': True}}))
-            while True:
-                msg = json.loads(await ws.recv())
-                if msg.get('id') == 1:
-                    return msg.get('result', {}).get('result', {}).get('value') is True
-
-    try:
-        return asyncio.run(run())
-    except Exception:
-        return False
-
-
 def watch(port=None):
     previous_status = None
     while True:
         try:
             instance = hh.cdp_discovery.find_running_instance(port)
-            if instance.page:
-                status = f"已连接调试端口 {instance.endpoint.port}"
-                if not engine_alive(instance.page):
-                    log(f"注入引擎（端口 {instance.endpoint.port}）")
-                    response = hh.cdp_inject(
-                        instance.page, hh.build_engine_js(hh.load_dictionary()),
-                        watch_seconds=8)
-                    if response.get('error') or response.get('result', {}).get('exceptionDetails'):
-                        raise RuntimeError("注入失败，稍后重试；不会重启应用")
+            if instance.pages:
+                report = hh.cdp_targets.inject_windows(
+                    instance.endpoint.port, hh.build_engine_js(hh.load_dictionary()),
+                    watch_seconds=0, ready_timeout=0, only_missing=True)
+                status = (f"端口 {instance.endpoint.port}：主窗口 {report.successful}，"
+                          f"跳过 {report.skipped}，未完成 {report.failed}")
             elif instance.endpoint:
                 status = "调试端口已就绪，等待主界面加载（不重启应用）"
             elif instance.pids:

@@ -19,6 +19,7 @@ def completed(stdout=b"", returncode=0, stderr=b""):
 
 def page(**overrides):
     value = {
+        "id": "main",
         "type": "page",
         "title": "Antigravity",
         "url": "https://127.0.0.1:7555/",
@@ -169,7 +170,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(connection.close.call_count, 2)
         self.http.assert_called_with("127.0.0.1", 7542, timeout=0.5)
 
-    def test_page_selection_rejects_non_ui_targets_and_unsafe_websockets(self):
+    def test_candidates_reject_unsafe_urls_types_and_mismatched_target_ids(self):
         endpoint = discovery.Endpoint("127.0.0.1", 7542)
         rejected = [
             None,
@@ -179,35 +180,72 @@ class DiscoveryTests(unittest.TestCase):
             page(url="https://example.com/"),
             page(url="https://127.0.0.1/"),
             page(url="https://test-user:test-secret@127.0.0.1:7555/"),
-            page(title="Loading Antigravity"),
+            page(id=None),
+            page(id=""),
+            page(id=123),
+            page(id="other"),
             page(webSocketDebuggerUrl="wss://127.0.0.1:7542/devtools/page/main"),
             page(webSocketDebuggerUrl="ws://example.com:7542/devtools/page/main"),
             page(webSocketDebuggerUrl="ws://user@127.0.0.1:7542/devtools/page/main"),
             page(webSocketDebuggerUrl="ws://127.0.0.1:9999/devtools/page/main"),
             page(webSocketDebuggerUrl="ws://127.0.0.1:7542/devtools/browser/main"),
+            page(webSocketDebuggerUrl="ws://127.0.0.1:7542/devtools/page/main/extra"),
+            page(webSocketDebuggerUrl="ws://127.0.0.1:7542/devtools/page/other"),
             page(webSocketDebuggerUrl="ws://127.0.0.1:bad/devtools/page/main"),
             page(webSocketDebuggerUrl=None),
         ]
         for invalid in rejected:
             with self.subTest(invalid=invalid):
-                self.assertIsNone(discovery._select_page(endpoint, [invalid]))
-        self.assertIsNone(discovery._select_page(endpoint, {"pages": [page()]}))
-        self.assertEqual(discovery._select_page(endpoint, rejected + [page()]), page())
+                self.assertEqual(discovery.candidate_pages(endpoint, [invalid]), [])
+        self.assertEqual(discovery.candidate_pages(endpoint, {"pages": [page()]}), [])
+        self.assertEqual(discovery.candidate_pages(endpoint, rejected + [page()]), [page()])
 
     def test_page_websocket_is_pinned_to_verified_ipv4_or_ipv6_listener(self):
         original = page(webSocketDebuggerUrl="ws://localhost:7542/devtools/page/main?x=1#ignored")
         for host, netloc in (("127.0.0.1", "127.0.0.1"), ("::1", "[::1]")):
             with self.subTest(host=host):
-                selected = discovery._select_page(discovery.Endpoint(host, 7542), [original])
-                self.assertEqual(selected["webSocketDebuggerUrl"], f"ws://{netloc}:7542/devtools/page/main?x=1")
+                candidates = discovery.candidate_pages(discovery.Endpoint(host, 7542), [original])
+                self.assertEqual(len(candidates), 1)
+                self.assertEqual(candidates[0]["webSocketDebuggerUrl"], f"ws://{netloc}:7542/devtools/page/main?x=1")
         self.assertEqual(original["webSocketDebuggerUrl"], "ws://localhost:7542/devtools/page/main?x=1#ignored")
 
-    def test_main_title_preferred_and_ambiguous_local_pages_rejected(self):
+    def test_candidates_are_not_main_window_acceptance_and_titles_are_not_identity(self):
         endpoint = discovery.Endpoint("127.0.0.1", 7542)
-        preview = page(title="Local preview", url="http://127.0.0.1:3000/")
-        self.assertEqual(discovery._select_page(endpoint, [preview, page()]), page())
-        with self.assertRaises(discovery.DiscoveryError):
-            discovery._select_page(endpoint, [preview, page(title="Other local page")])
+        candidates = [
+            page(id="preview", title="Antigravity", url="http://127.0.0.1:3000/",
+                 webSocketDebuggerUrl="ws://127.0.0.1:7542/devtools/page/preview"),
+            page(title="A renamed conversation"),
+            page(id="loading", title="Loading",
+                 webSocketDebuggerUrl="ws://127.0.0.1:7542/devtools/page/loading"),
+        ]
+        # Every local candidate still requires cdp_targets' in-page identity guard.
+        self.assertEqual(discovery.candidate_pages(endpoint, candidates), candidates)
+        self.assertTrue(all("confirmed" not in candidate for candidate in candidates))
+
+    def test_multiple_candidates_deduplicate_by_valid_target_id(self):
+        endpoint = discovery.Endpoint("127.0.0.1", 7542)
+        second = page(id="second", webSocketDebuggerUrl="ws://127.0.0.1:7542/devtools/page/second")
+        candidates = [
+            page(webSocketDebuggerUrl="ws://127.0.0.1:7542/devtools/page/wrong"),
+            page(),
+            page(title="duplicate main", webSocketDebuggerUrl="ws://localhost:7542/devtools/page/main"),
+            second,
+            dict(second),
+        ]
+        self.assertEqual(discovery.candidate_pages(endpoint, candidates), [page(), second])
+
+    def test_instance_keeps_page_compatibility_without_shared_lists(self):
+        endpoint = discovery.Endpoint("127.0.0.1", 7542)
+        old = discovery.Instance({9132}, endpoint, page())
+        self.assertEqual(old.pages, [page()])
+        pages = [page(), page(id="second")]
+        multiple = discovery.Instance({9132}, endpoint, pages=pages)
+        self.assertEqual(multiple.page, pages[0])
+        self.assertEqual(multiple.pages, pages)
+        first = discovery.Instance(set())
+        second = discovery.Instance(set())
+        first.pages.append(page())
+        self.assertEqual(second.pages, [])
 
     def mock_discovery(self, endpoints, responses):
         pids = self.enterContext(mock.patch.object(discovery, "antigravity_pids", return_value={9132}))
@@ -227,6 +265,21 @@ class DiscoveryTests(unittest.TestCase):
         listeners.assert_called_once_with({9132})
         self.assertEqual(request.call_count, 2)
 
+    def test_find_returns_all_safe_candidates_for_identity_checks(self):
+        endpoint = discovery.Endpoint("127.0.0.1", 7542)
+        preview = page(id="preview", title="Local preview", url="http://127.0.0.1:3000/",
+                       webSocketDebuggerUrl="ws://127.0.0.1:7542/devtools/page/preview")
+        loading = page(id="loading", title="Loading",
+                       webSocketDebuggerUrl="ws://127.0.0.1:7542/devtools/page/loading")
+        self.mock_discovery([endpoint], {
+            (7542, "/json/version"): {"User-Agent": "Antigravity/2.29.0"},
+            (7542, "/json"): [preview, page(), loading, page(url="https://example.com/"), page()],
+        })
+        instance = discovery.find_running_instance()
+        self.assertEqual(instance.pages, [preview, page(), loading])
+        self.assertEqual(instance.page, preview)
+        self.assertEqual(instance.endpoint, endpoint)
+
     def test_invalid_version_responses_are_not_cdp_matches(self):
         endpoint = discovery.Endpoint("127.0.0.1", 7542)
         _, _, request = self.mock_discovery([endpoint], {})
@@ -244,11 +297,11 @@ class DiscoveryTests(unittest.TestCase):
                 self.assertEqual(discovery.find_running_instance(), discovery.Instance({9132}))
                 request.assert_called_once_with(endpoint, "/json/version")
 
-    def test_running_cdp_without_ready_page_is_not_absent(self):
+    def test_running_cdp_without_safe_candidates_is_not_absent(self):
         endpoint = discovery.Endpoint("127.0.0.1", 7542)
         self.mock_discovery([endpoint], {
             (7542, "/json/version"): {"User-Agent": "Antigravity/2.29.0"},
-            (7542, "/json"): [page(title="Loading")],
+            (7542, "/json"): [page(url="data:text/html,loading")],
         })
         self.assertEqual(discovery.find_running_instance(), discovery.Instance({9132}, endpoint))
 
@@ -274,7 +327,7 @@ class DiscoveryTests(unittest.TestCase):
             (7542, "/json/version"): {"User-Agent": "Antigravity/2.29.0"},
             (7542, "/json"): [page()],
             (9333, "/json/version"): {"User-Agent": "Antigravity/2.29.0"},
-            (9333, "/json"): [page(webSocketDebuggerUrl="ws://127.0.0.1:9333/devtools/page/other")],
+            (9333, "/json"): [page(id="other", webSocketDebuggerUrl="ws://127.0.0.1:9333/devtools/page/other")],
         })
         with self.assertRaisesRegex(discovery.DiscoveryError, "--port"):
             discovery.find_running_instance()

@@ -1,7 +1,7 @@
 """Find local CDP listeners owned by Antigravity without scanning other apps."""
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import http.client
 import ipaddress
 import json
@@ -28,6 +28,13 @@ class Instance:
     pids: set
     endpoint: Endpoint | None = None
     page: dict | None = None
+    pages: list = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.page and not self.pages:
+            self.pages = [self.page]
+        elif self.pages and not self.page:
+            self.page = self.pages[0]
 
 
 def _run(args):
@@ -150,22 +157,25 @@ def _local_url(url, schemes):
         return False
 
 
-def _select_page(endpoint, pages):
+def candidate_pages(endpoint, pages):
+    """Return safe-to-probe targets, not yet trusted translation destinations."""
     if not isinstance(pages, list):
-        return None
+        return []
     candidates = []
+    seen = set()
     for page in pages:
         if not isinstance(page, dict) or page.get("type") != "page":
             continue
         if not _local_url(page.get("url"), ("http", "https")):
             continue
-        if str(page.get("title", "")).startswith("Loading"):
+        target_id = page.get("id")
+        if not isinstance(target_id, str) or not target_id or target_id in seen:
             continue
         websocket = page.get("webSocketDebuggerUrl")
         if not _local_url(websocket, ("ws",)):
             continue
         parts = urlsplit(websocket)
-        if parts.port != endpoint.port or not parts.path.startswith("/devtools/page/"):
+        if parts.port != endpoint.port or parts.path != "/devtools/page/" + target_id:
             continue
         # Pin the returned URL to the listener we verified, not a DNS name.
         host = f"[{endpoint.host}]" if ":" in endpoint.host else endpoint.host
@@ -173,14 +183,8 @@ def _select_page(endpoint, pages):
         page["webSocketDebuggerUrl"] = urlunsplit(
             ("ws", f"{host}:{endpoint.port}", parts.path, parts.query, ""))
         candidates.append(page)
-    named = [page for page in candidates if page.get("title") == "Antigravity"]
-    if named:
-        return named[0]
-    if len(candidates) > 1:
-        raise DiscoveryError("Multiple local pages; cannot safely identify the Antigravity window.")
-    if candidates:
-        return candidates[0]
-    return None
+        seen.add(target_id)
+    return candidates
 
 
 def find_running_instance(port=None):
@@ -204,7 +208,7 @@ def find_running_instance(port=None):
     if not matches:
         return Instance(pids)
     endpoint = matches[0]
-    return Instance(pids, endpoint, _select_page(endpoint, _http_json(endpoint, "/json")))
+    return Instance(pids, endpoint, pages=candidate_pages(endpoint, _http_json(endpoint, "/json")))
 
 
 def require_free_port(port):

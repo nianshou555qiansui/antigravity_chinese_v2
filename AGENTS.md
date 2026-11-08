@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Sources live at the repository root. `hanhua_v2.py` launches Antigravity and injects the embedded JavaScript engine; `caiji.py` collects untranslated text; `shouhu.py` provides the Windows-only watchdog. `qidong.bat` and `qidong_mac.*` are platform launchers. `dicts/common.json` holds shared terms; `dicts/ui_v2*.json` holds version-specific translations. `docs/screenshot.png` illustrates the README. Consult `CLAUDE.md` for implementation pitfalls.
+Sources are at the root. `hanhua_v2.py` handles startup and the embedded engine; `cdp_discovery.py` verifies endpoints; `cdp_targets.py` validates and translates Hub windows. `caiji.py` collects untranslated text; `shouhu.py` is the Windows watchdog. `qidong.bat` and `qidong_mac.*` are launchers. `dicts/common.json` holds shared terms; `dicts/ui_v2*.json` holds version-specific translations. Tests are in `tests/`; assets in `docs/`. See `CLAUDE.md` for pitfalls.
 
 ## Build, Test, and Development Commands
 
@@ -21,11 +21,11 @@ Dictionary files use UTF-8, two-space indentation, and English-to-Chinese string
 
 ## Testing Guidelines
 
-The offline `unittest` suite runs the full injected engine in Node.js; no coverage threshold is configured. It does not access a running Antigravity instance.
+Offline `unittest` runs the full engine in Node.js without accessing Antigravity. No coverage threshold is configured.
 
 - Run `python -m unittest discover -s tests -v` for JSON integrity, normalized-key uniqueness, full-engine behavior, and ASCII launcher checks (requires Node.js).
-- Run `python -m compileall -q hanhua_v2.py caiji.py shouhu.py` for Python syntax checks.
-- Manually verify reinjection, page reloads, menus/tooltips, and unchanged code, terminals, inputs, and conversation titles. Record tested platforms.
+- Run `python -m compileall -q hanhua_v2.py cdp_discovery.py cdp_targets.py caiji.py shouhu.py` for Python syntax checks.
+- Manually verify multiple/new windows, reloads, menus/tooltips, and unchanged external pages, previews, code, inputs, and conversation titles. Record tested platforms.
 
 ## Commit & Pull Request Guidelines
 
