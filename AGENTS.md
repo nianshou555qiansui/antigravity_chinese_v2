@@ -2,17 +2,18 @@
 
 ## Project Structure & Module Organization
 
-Root sources include `hanhua_v2.py` (startup/engine), `cdp_discovery.py`, `cdp_targets.py`, and `cdp_connection.py` (endpoints/injection/sessions). `diagnostics.py` provides read-only checks; `guard_runtime.py` manages watchdog states. `caiji.py` exports statistics; `privacy_policy.py` shares DOM privacy rules. `shouhu.py` is the Windows watchdog. Dictionaries are in `dicts/`, tests in `tests/`, assets in `docs/`. See `CLAUDE.md` for pitfalls.
+Root sources include `hanhua_v2.py` (engine), `cdp_*.py` (CDP), `diagnostics.py` (read-only checks), `guard_runtime.py` (watchdog states), `caiji.py` (statistics), `privacy_policy.py` (DOM rules), and `audit_bundle.py` (local bundle audit without CDP/network). `shouhu.py` is the Windows watchdog. Dictionaries are in `dicts/`, tests in `tests/`, assets in `docs/`. See `CLAUDE.md`.
 
 ## Build, Test, and Development Commands
 
-Requires Python 3.10+ and Antigravity; tests need Python 3.11+. Use `python3` on macOS. No build step.
+Requires Python 3.10+ and Antigravity; tests need Python 3.11+. Use `python3` on macOS. No build.
 
 - `python -m pip install -r requirements.txt`: install the `websockets` dependency.
 - `python hanhua_v2.py`: discover the installation, launch, inject, and briefly watch.
 - `python hanhua_v2.py --no-launch --watch 0`: reinject into an existing debug-enabled instance.
 - `python hanhua_v2.py --doctor`: check dictionaries, windows, and engine snapshots without changing the app.
 - `python caiji.py`: export source counts only; `--include-ui-text` explicitly exports audited static labels; `--misses` exports numeric engine misses.
+- `python audit_bundle.py --bundle path/to/main.js --version 2.29.0 --output audit-report.json`: hash a local bundle and produce review-only candidates; never downloads or edits dictionaries.
 
 ## Coding Style & Naming Conventions
 
@@ -22,11 +23,11 @@ Dictionaries use UTF-8, two-space indentation, and English-to-Chinese string map
 
 ## Testing Guidelines
 
-Offline `unittest` runs the full engine in Node.js without accessing Antigravity. No coverage threshold is configured.
+Offline `unittest` runs the full engine in Node.js without Antigravity. No coverage threshold.
 
-- Run `python -m unittest discover -s tests -v` for JSON integrity, normalized-key uniqueness, full-engine behavior, and ASCII launcher checks (requires Node.js).
+- Run `python -m unittest discover -s tests -v` for dictionary, engine, privacy, and launcher checks (requires Node.js).
 - Run `python -m compileall -q .` for Python syntax checks.
-- Manually verify multiple/new windows, reloads, menus/tooltips, and unchanged external pages, previews, code, inputs, and conversation titles. Record tested platforms.
+- Manually verify windows/reloads, menus, tooltips, and protected pages. Record platforms.
 
 ## Commit & Pull Request Guidelines
 

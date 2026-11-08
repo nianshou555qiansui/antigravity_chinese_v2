@@ -115,6 +115,14 @@ python caiji.py --port 9334         # 多实例时明确选择调试端口；默
 
 `caiji.py` 仅统计当前页面中的许可位置，文本候选也受静态白名单限制。想审计整个界面（包括未打开的设置页），先从调试端口的 `/json` 取得主页面 URL，再从该 URL 的 origin 下载 `/main.js`（2.29.0 约 11 MB；界面服务端口与调试端口不同，可能使用自签名 HTTPS）。抽取 UI 字符串与 `dicts/` 做双向 diff，可发现新增或改写的原文；核对上下文并排除库文案及用户数据后再翻译。过滤规则与踩坑见 [CLAUDE.md](CLAUDE.md) 的「bundle 审计法」。
 
+现在也可以对已下载的本地 bundle 使用只读审计器：
+
+```bash
+python audit_bundle.py --bundle path/to/main.js --version 2.29.0 --output audit-report.json
+```
+
+`audit_bundle.py` 不联网、不连接 CDP、不读取运行中的页面，也不修改字典。报告记录 bundle 与各字典 SHA-256，保留字符串位置和属性/直接文本证据，给出精确命中、`new-candidate`、`possible-rewrite`、`not-found-in-bundle`、动态模板、术语及占位符复核项。相似度默认至少 0.85 且只供人工审核；`not-found` 不等于废弃，工具不会自动添加、删除或发布词条。`--expect-sha256` 可在审计前锁定已确认的 bundle；报告中的 `audit-report.json` 是本机产物，不要提交。
+
 离线回归检查：`python -m unittest discover -s tests -v`（需本机有 Node.js，不会启动或修改 Antigravity）。改完词典或引擎都运行一次。
 
 旧版 `pending.json` / `misses.json` 可能仍有私人原文，新代码不会自动清理历史文件；请自行检查。新报告及原子写入临时文件均在 `.gitignore` 中，勿提交。
