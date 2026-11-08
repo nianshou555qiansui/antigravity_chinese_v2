@@ -2,6 +2,8 @@
 
 给 [Antigravity](https://antigravity.google/) 2.0 的界面加中文。
 
+当前适配 **2.29.0**：新增 600 条界面文案，覆盖内置浏览器、语音、侧边面板、远程项目、插件登录和自动化任务；词典共 3495 条。已在 Windows 版 2.29.0 验证运行时注入，macOS 本轮未实机验证。
+
 不改安装目录里的任何文件：以调试端口启动 Antigravity，通过 Chrome DevTools 协议把翻译脚本注入页面。想恢复英文，关掉再正常启动就行；官方更新也不会弄坏它。
 
 ![中文界面](docs/screenshot.png)
@@ -56,7 +58,7 @@ python hanhua_v2.py --autostart off     # 关闭
 漏翻的地方只需要改 JSON，不用碰代码。
 
 1. 把 Antigravity 导航到那个页面，运行 `python caiji.py`，未翻译的英文会写进 `pending.json`
-2. 翻译后按 `{"原文": "译文"}` 的格式加进 `dicts/`：`common.json` 放通用词，`ui_v2.json` 放 2.0 界面文案，`ui_v2_225.json` 放 2.25.25 起的增量；同一个 key 别写进两个文件
+2. 翻译后按 `{"原文": "译文"}` 的格式加进 `dicts/`：`common.json` 放通用词，`ui_v2.json` 放 2.0 基础文案，`ui_v2_225.json` 和 `ui_v2_229.json` 分别放 2.25.25、2.29.0 的增量；同一个 key 别写进两个文件
 3. `python hanhua_v2.py --no-launch` 重新注入验证
 
 写字典有三条规矩：
@@ -69,7 +71,9 @@ Agent 统一译作智能体。下拉菜单和悬停提示只在展开或悬停�
 
 官方更新后想知道哪些词条失效了：跑 `python caiji.py --misses`，它会列出注入以来界面上出现过但没翻出来的英文，写入 `misses.json`（同样可能含本机数据，勿提交）。
 
-`caiji.py` 只覆盖你点到的那几页。想一次拿全整个界面的文案（包括从没打开过的设置页），可以直接从界面的 JS bundle 里抽：带调试端口启动后下载 `https://127.0.0.1:9333/main.js`（约 10 MB，界面全部文案都在里面），抽出字符串字面量与 `dicts/` 做双向 diff，就能同时看出「新增文案」和「官方改写的原文」。过滤规则与踩坑见 [CLAUDE.md](CLAUDE.md) 的「bundle 审计法」。
+`caiji.py` 只覆盖你点到的那几页。想审计整个界面（包括未打开的设置页），先从调试端口的 `/json` 取得主页面 URL，再从该 URL 的 origin 下载 `/main.js`（2.29.0 约 11 MB；界面服务端口与调试端口不同，可能使用自签名 HTTPS）。抽取 UI 字符串与 `dicts/` 做双向 diff，可发现新增或改写的原文；核对上下文并排除库文案及用户数据后再翻译。过滤规则与踩坑见 [CLAUDE.md](CLAUDE.md) 的「bundle 审计法」。
+
+离线回归检查：`python -m unittest discover -s tests -v`（需本机有 Node.js，不会启动或修改 Antigravity）。改完词典或引擎都运行一次。
 
 `pending.json` 是你本机的界面快照，可能夹带账号邮箱，已在 `.gitignore` 里，别提交。
 
@@ -90,7 +94,8 @@ shouhu.py            可选守护进程（仅 Windows）：登录自启，自动
 qidong.bat           Windows 一键启动器
 qidong_mac.sh        macOS 一键启动器
 qidong_mac.command   macOS 双击入口（调 qidong_mac.sh）
-dicts/               字典（common.json + ui_v2*.json，约 2900 条）
+dicts/               字典（common.json + ui_v2*.json，约 3500 条）
+tests/               离线词典及完整 JavaScript 引擎回归测试
 ```
 
 实现细节和踩坑记录在 [CLAUDE.md](CLAUDE.md)。

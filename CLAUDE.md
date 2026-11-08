@@ -9,7 +9,9 @@ Antigravity，连 Chrome DevTools 协议（CDP）把一段 MutationObserver 翻�
 **不修改任何安装文件**（不碰 `Antigravity.exe`、`app.asar`、`product.json`），因此没有还原逻辑，
 官方更新也不会破坏安装。
 
-依赖：Python 3 + `websockets`（本机实测 Python 3.14.7 / websockets 16.0）。无构建、无测试框架。
+依赖：Python 3 + `websockets`（本机实测 Python 3.14.7 / websockets 16.0）。无构建；离线测试使用标准库 `unittest` + Node.js。
+当前适配 Antigravity **2.29.0**（2026-11）。官方版本号从调试端口 `/json/version` 的 User-Agent 读：
+`Antigravity/2.29.0`。本轮 Windows 实机注入通过；macOS 未实机验证。
 
 ### 为什么不能沿用 1.x 的做法
 
@@ -33,9 +35,10 @@ python caiji.py                          # 抓当前页面未翻译英文 → pe
 python caiji.py --misses                 # 拉引擎未命中日志 → misses.json（需已注入）
 ```
 
-改完代码后的自查（没有测试框架，靠这几条）：
+改完代码后的自查：先跑离线回归（不会启动或修改 Antigravity），再按改动做实机验证。
 
 ```bash
+python -m unittest discover -s tests -v
 python -c "import ast,io;[ast.parse(io.open(f,encoding='utf-8').read()) for f in ['hanhua_v2.py','caiji.py','shouhu.py']]"
 python -c "import json,io,os;[json.load(io.open('dicts/'+f,encoding='utf-8')) for f in os.listdir('dicts') if f.endswith('.json')]"
 # 引擎 JS 必须单独校验：它是 Python 字符串拼出来的，语法错在注入时才会暴露
@@ -68,6 +71,7 @@ dicts/*.json         字典，格式 {"英文原文": "中文译文"}
 README.md            面向用户的门面文档（用法、原理、限制）；改 CLI 参数或用户可见行为时同步
 docs/screenshot.png  界面截图，README 引用
 requirements.txt     依赖清单（只有 websockets）
+tests/               unittest + Node.js 完整引擎离线回归（无需浏览器或额外 npm 包）
 ```
 
 **注意 `build_engine_js()` 的返回值是字符串**：整个翻译引擎（约 360 行 JS）以 Python 三引号
@@ -132,13 +136,13 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
 
 ### 翻译引擎
 
-**匹配优先级（顺序不能动）**：
+**匹配优先级**（2.29.0 调整：完整动态模板必须先于子串替换，避免改写变量）：
 
 1. **整节点精确匹配** —— 优先级最高。句子里提到 Antigravity / MCP / Google AI 等产品名也照翻，
    `PROTECTED` 只管子串替换
 2. **大小写归一匹配** —— 限 30 字符以内，防误匹配长句
-3. **子串替换 `smartReplace()`** —— 仅 `phraseEntries`（key ≥ 30 字符的完整句子）参与，带词边界检查
-4. **正则规则 `REGEX_RULES`** —— 带变量的动态文案（时间、模型名、邮箱、按键提示）
+3. **正则规则 `REGEX_RULES`** —— 带变量的动态文案（时间、模型名、邮箱、按键提示）；先尝试原文以保留变量中的空白和引号，再尝试归一化文案
+4. **子串替换 `smartReplace()`** —— 仅 `phraseEntries`（key ≥ 30 字符的完整句子）参与，带词边界检查；含产品名或已有中文的文本不走子串替换，避免重注入时翻译英文变量
 
 **监听策略**：`MutationObserver` 同时听 `childList` + `characterData` + `attributes`。
 `characterData` **必须听**——React 重渲染直接改写文本节点，不听就会被改回英文。
@@ -193,9 +197,13 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
 
 `dicts/*.json` 运行时全部合并成一个 map。`common.json` 放通用 UI 词（23 条），
 `ui_v2.json` 放 2.0 界面文案（约 2400 条，2026-10 按 bundle 审计法从 2.23.1 补齐），
-`ui_v2_225.json` 放 2.25.25 的增量（471 条，同法审计）。**所有文件之间不得有重复 key**——
+`ui_v2_225.json` 放 2.25.25 的增量（471 条），`ui_v2_229.json` 放 2.29.0 的增量（600 条）；总计 3495 条。**所有文件之间不得有重复 key**——
 同一条翻译存在两处，改一处另一处就会漂移。`common.json` 是通用词的唯一归属地。
 按版本拆文件而不是并进 `ui_v2.json`，是为了让「哪批词条对应哪次官方更新」一眼可查。
+
+**重名不会报错，而是静默覆盖**：`load_dictionary()` 按 `sorted(os.listdir())` 顺序合并，
+后加载的文件覆盖先前的（`common.json` → `ui_v2.json` → `ui_v2_225.json` → `ui_v2_229.json`）。
+加词条前先跑 `python -m unittest discover -s tests -v` 的重复检查，别指望加载器替你拦。
 
 新增翻译只需在 `dicts/` 下加 JSON，不用改代码。
 
@@ -245,6 +253,13 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
    官方改写只配出 4 条高相似度，绝大多数「字典有、bundle 没有」是 1.x 遗留的
    VS Code/Monaco 菜单词条（`Show in Finder`、`Select Line`、`Clear Terminal`），
    不是失效文案，**别去删它们**——它们不会命中，但也无害。
+9. **2.29.0（2026-11）**：`main.js` 为 11,187,917 字节，SHA-256 为
+   `8d1196a22cd3eb9779e8faf5c31eb732d3df8d9d037b685733ed4e3d6cdfb5a2`。
+   安装目录 `resources/bin/language_server.exe` 内嵌 ZIP 中的 `main.js` 与本机界面服务返回文件一致；只读提取即可离线审计，不必重启应用。
+   调试端口与界面端口不是同一个，不能固定下载 `https://127.0.0.1:9333/main.js`；从 `/json` 的主页面 URL / resource entries 确定实际地址。
+   本轮新增 600 条：属性文案 + 直接文本节点 + 实机未命中补漏；产品名、库内部标识、用户内容不收录。录音计数、侧边问题计数、搜索结果模板走 `REGEX_RULES`。
+   `Search conversations with` 等片段经 bundle / DOM 确认是图标两侧的实际文本节点，不能把含 Markdown 图标的整句原始消息直接当 DOM 词条。
+   引擎补齐既有 Shadow DOM 的遍历/观察与 host 禁区回溯、可编辑属性枚举保护，并让 JS 空白归一集合与 Python 一致。
 
 **三条铁律**：
 

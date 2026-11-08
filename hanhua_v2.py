@@ -145,7 +145,7 @@ def build_engine_js(dict_map):
     // 技能名本来就不在字典里，走不到替换分支。
     const PROTECTED = [
         'antigravity', 'jetski', 'gemini', 'google ai', 'best of n',
-        'google chrome', 'marketplace', 'mcp', 'citc',
+        'google chrome', 'marketplace', 'mcp', 'citc', 'chief of staff',
     ];
     function isProtected(s) {
         const low = s.toLowerCase();
@@ -209,14 +209,15 @@ def build_engine_js(dict_map):
     // 特别是弯引号——界面里的 Don't / Antigravity's 用的是 ’ 而不是 '。
     function norm(s) {
         if (!s) return '';
-        return s.replace(/\\s+/g, ' ')
+        // Python re 的空白集合包含 U+0085 / U+001C，而 JS 的 \\s 还会吞掉 BOM。
+        return s.replace(/[\\u0009-\\u000D\\u001C-\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]+/g, ' ')
                 .replace(/[’‘]/g, "'")
                 .replace(/[“”]/g, '"')
-                .trim();
+                .replace(/^[ ]+|[ ]+$/g, '');
     }
 
     function isInBlockedZone(node) {
-        let curr = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        let curr = node.nodeType === Node.TEXT_NODE ? (node.parentElement || node.parentNode) : node;
         let depth = 0;
         // 深度 25：Tailwind/React 的嵌套很深，12 层不够——禁区容器在更上层时会漏判，
         // 用户的代码/会话内容就会被翻译。这段只对"值变过"的文本节点跑，代价可忽略。
@@ -224,7 +225,8 @@ def build_engine_js(dict_map):
             if (curr.nodeType === Node.ELEMENT_NODE) {
                 const tag = curr.tagName.toUpperCase();
                 if (BLOCKED_TAGS.includes(tag)) return true;
-                if (curr.getAttribute('contenteditable') === 'true') return true;
+                const editable = curr.getAttribute('contenteditable');
+                if (editable !== null && ['', 'true', 'plaintext-only'].includes(editable.toLowerCase())) return true;
                 const className = curr.className || '';
                 if (typeof className === 'string') {
                     if (BLOCKED_CLASS_SUBSTR.some(cls => className.includes(cls))) return true;
@@ -240,9 +242,9 @@ def build_engine_js(dict_map):
                 }
                 const role = curr.getAttribute('role') || '';
                 if (role === 'code' || role === 'img') return true;
+                depth++;
             }
-            curr = curr.parentElement || (curr.parentNode && curr.parentNode.host);
-            depth++;
+            curr = curr.parentElement || curr.parentNode || curr.host;
         }
         return false;
     }
@@ -302,6 +304,19 @@ def build_engine_js(dict_map):
          () => '在此项目中工作时继承你的全局权限。'],
         [/^Inherits your Global Permissions when working (.+)[.]$/,
          (m, a) => '工作时继承你的全局权限（范围：' + a + '）。'],
+        // 2.29.0 的计数/录音/搜索提示来自模板；保留变量，不记录本机值。
+        [/^([0-9]+) Side Questions?$/, (m, a) => a + ' 个侧边问题'],
+        [/^View ([0-9]+) side questions?$/, (m, a) => '查看 ' + a + ' 个侧边问题'],
+        [/^Question ([0-9]+) of ([0-9]+)$/, (m, a, b) => '第 ' + a + ' 个问题，共 ' + b + ' 个'],
+        [/^Show ([0-9]+) earlier steps?$/, (m, a) => '显示之前的 ' + a + ' 个步骤'],
+        [/^Show ([0-9]+) more subagents?$/, (m, a) => '再显示 ' + a + ' 个子智能体'],
+        [/^No apps found for "(.*)"[.]$/, (m, a) => '未找到与“' + a + '”匹配的应用。'],
+        [/^([0-9]+) calls? · ([0-9]+[.][0-9]+) MB$/,
+         (m, a, b) => a + ' 次通话 · ' + b + ' MB'],
+        [/^Deleted ([0-9]+) recordings? [(]([0-9]+[.][0-9]+) MB[)]$/,
+         (m, a, b) => '已删除 ' + a + ' 条录音（' + b + ' MB）'],
+        [/^This deletes ([0-9]+) call recordings? [(]([0-9]+[.][0-9]+) MB[)] from your machine[.] You can't undo this[.]$/,
+         (m, a, b) => '这将从你的设备删除 ' + a + ' 条通话录音（' + b + ' MB），此操作无法撤销。'],
     ];
     function applyRegexRules(text) {
         for (const [re, fn] of REGEX_RULES) {
@@ -320,6 +335,8 @@ def build_engine_js(dict_map):
         if (map.has(t)) return map.get(t);
         const low = t.toLowerCase();
         if (lowerMap.has(low) && t.length < 30) return lowerMap.get(low);
+        const rawRegex = applyRegexRules(raw);
+        if (rawRegex !== raw) return rawRegex;
         const byRegex = applyRegexRules(t);
         return byRegex !== t ? byRegex : null;
     }
@@ -328,21 +345,26 @@ def build_engine_js(dict_map):
         try {
             if (!node) return;
 
-            if (node.nodeType === Node.ELEMENT_NODE) {
-                const tag = node.tagName.toUpperCase();
-                if (BLOCKED_TAGS.includes(tag)) return;
+            if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                    const tag = node.tagName.toUpperCase();
 
-                // 属性（placeholder/title/aria-label 等）是 UI 元数据，不是用户输入内容，
-                // 所以不查禁区——保证输入框的提示也能翻译
-                for (const attr of TRANSLATABLE_ATTRS) {
-                    const v = node.getAttribute(attr);
-                    if (v) {
-                        const t = translateAttrValue(v);
-                        if (t !== null && t !== v) node.setAttribute(attr, t);
+                    // 属性是 UI 元数据，不是用户输入；输入框提示也需要翻译。
+                    for (const attr of TRANSLATABLE_ATTRS) {
+                        const v = node.getAttribute(attr);
+                        if (v) {
+                            const t = translateAttrValue(v);
+                            if (t !== null && t !== v) node.setAttribute(attr, t);
+                        }
+                    }
+                    if (BLOCKED_TAGS.includes(tag)) return;
+
+                    if (node.shadowRoot) {
+                        observeRoot(node.shadowRoot);
+                        translateNode(node.shadowRoot);
                     }
                 }
 
-                if (node.shadowRoot) translateNode(node.shadowRoot);
                 for (const child of node.childNodes) translateNode(child);
 
             } else if (node.nodeType === Node.TEXT_NODE) {
@@ -365,15 +387,14 @@ def build_engine_js(dict_map):
                 } else if (lowerMap.has(valLower) && valLower.length < 30) {
                     // 大小写归一精确匹配（限短词，防误匹配长句）
                     newVal = lowerMap.get(valLower);
-                } else if (!isProtected(valNorm)) {
-                    // 智能子串替换：仅用于字典没有整句的复合文本。
-                    // 含产品名的文本一律不做子串替换，避免把产品名切碎。
-                    newVal = smartReplace(valNorm);
-                }
-
-                // 动态文案（带时间/数字变量）走正则规则
-                if (newVal === originalVal || newVal === valNorm) {
-                    newVal = applyRegexRules(valNorm);
+                } else {
+                    // 完整动态模板先匹配，避免子串替换改写搜索词等变量。
+                    newVal = applyRegexRules(originalVal);
+                    if (newVal === originalVal) newVal = applyRegexRules(valNorm);
+                    if (newVal === valNorm && !isProtected(valNorm) && !/[一-鿿]/.test(valNorm)) {
+                        // 已有中文的输出不再子串替换，重注入也保留其中的英文变量。
+                        newVal = smartReplace(valNorm);
+                    }
                 }
 
                 if (newVal !== originalVal && newVal !== valNorm) {
@@ -410,6 +431,12 @@ def build_engine_js(dict_map):
         attributes: true,
         attributeFilter: TRANSLATABLE_ATTRS
     };
+    const observedRoots = new WeakSet();
+    function observeRoot(root) {
+        if (observedRoots.has(root)) return;
+        observer.observe(root, obsOpts);
+        observedRoots.add(root);
+    }
 
     // 兜底：全量重扫可翻译属性（解决应用延迟设置 aria-label/title/placeholder 的漏翻）
     // 属性不查禁区（是 UI 元数据，不是用户输入内容）
@@ -438,7 +465,7 @@ def build_engine_js(dict_map):
     const startEngine = () => {
         if (started || stopped || !document.body) return;
         started = true;
-        observer.observe(document.body, obsOpts);
+        observeRoot(document.body);
         translateNode(document.body);
     };
 
@@ -475,7 +502,7 @@ def build_engine_js(dict_map):
     }, 3000);
 
     window.__ag_hanhua_engine__ = {
-        observe: (root) => observer.observe(root, obsOpts),
+        observe: observeRoot,
         misses: misses,
         disconnect: () => {
             stopped = true;
