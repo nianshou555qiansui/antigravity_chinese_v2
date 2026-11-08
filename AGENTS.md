@@ -6,7 +6,7 @@ Sources live at the repository root. `hanhua_v2.py` launches Antigravity and inj
 
 ## Build, Test, and Development Commands
 
-Requires Python 3 and Antigravity. Use `python3` on macOS. There is no build step.
+Requires Python 3.10+ and Antigravity; tests need Python 3.11+. Use `python3` on macOS. There is no build step.
 
 - `python -m pip install -r requirements.txt`: install the `websockets` dependency.
 - `python hanhua_v2.py`: discover the installation, launch, inject, and briefly watch.
@@ -33,4 +33,4 @@ History uses concise Chinese, action-oriented subjects describing fixes, diction
 
 ## Security & Configuration
 
-Use runtime injection only; never modify installed Antigravity files. Keep CDP local and preserve proxy bypasses. Never commit `pending.json`, `misses.json`, `shouhu.log`, or `shouhu.lock`. Avoid hardcoded account/path data. Save work before using launchers or the watchdog: they may close running instances.
+Use runtime injection only; never modify installed Antigravity files. Keep CDP local and preserve proxy bypasses. Never commit `pending.json`, `misses.json`, `shouhu.log`, or `shouhu.lock`. Avoid hardcoded account/path data. Default launchers and the watchdog must not close running instances. Only `--force-restart` with explicit confirmation may do so; save work first.

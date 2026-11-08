@@ -12,29 +12,34 @@
 
 ## 用法
 
-前置：Windows 或 macOS、Antigravity 2.0、Python 3 和 websockets。
+前置：Windows 或 macOS、Antigravity 2.0、Python 3.10+ 和 websockets（推荐 Python 3.11+，离线测试要求 3.11+）。
 
 ```bash
 pip install websockets
 ```
 
-Windows 双击 `qidong.bat`，macOS 双击 `qidong_mac.command` 或在终端跑 `./qidong_mac.sh`：关掉正在运行的 Antigravity（未保存的编辑会丢），带调试端口重启，等界面加载完注入，再守护 30 秒防止页面重载把脚本冲掉。看到 `[3/3] Done!` 就完成了。
+Windows 双击 `qidong.bat`，macOS 双击 `qidong_mac.command` 或在终端跑 `./qidong_mac.sh`：自动发现并复用已有的 Antigravity 调试端口；只有应用未运行时才启动。等待界面加载完注入，再守护 30 秒防止页面重载把脚本冲掉。看到 `[2/2] Done!` 就完成了；失败时启动器会保留错误退出码。
+
+**默认不会关闭或重启应用。** 已运行但没有可用调试端口时，会报错并保持应用不变。保存工作后可运行 `python hanhua_v2.py --force-restart`，输入 `RESTART` 确认后才关闭并重启；这仍可能丢失未保存内容。仅在明确接受风险的非交互场景使用 `--force-restart --yes`。
 
 macOS 从 GitHub 下 ZIP 解压的话，双击 `.command` 可能被系统拦（文件带隔离属性），改在终端里跑 `./qidong_mac.sh` 就行；git clone 下来的不受影响。
 
 也可以命令行：
 
 ```bash
-python hanhua_v2.py                                # 自动探测安装路径 + 启动 + 注入
+python hanhua_v2.py                                # 自动发现并复用；未运行时启动并注入
 python hanhua_v2.py --install-dir "D:\Antigravity" # 找不到可执行文件时手动指定（macOS 可指向 .app）
-python hanhua_v2.py --port 9334                    # 默认端口 9333 被占用时
+python hanhua_v2.py --port 9334                    # 只连接此端口；首次启动也使用此端口
 python hanhua_v2.py --no-launch                    # 只注入已带调试端口的实例
 python hanhua_v2.py --watch 60                     # 守护秒数，0 为不守护，默认 30
+python hanhua_v2.py --force-restart                # 保存工作后，交互确认重启
 ```
+
+省略 `--port` 时仅检查 Antigravity 进程拥有的回环监听端口，并校验调试服务的产品身份；首次启动仍默认使用 9333。发现多个有效调试端口时，需用 `--port` 明确选择，不会随意选一个实例。
 
 注入只存在于内存里，每次启动 Antigravity 都要重跑。偶尔注入成功了界面还是英文，多半是页面后来又重载过：等守护期结束，或界面稳定后跑一次 `python hanhua_v2.py --no-launch`。
 
-也可以开自动注入，之后就不用管了：
+也可以开启安全自动注入（仅 Windows；需要应用已有调试端口）：
 
 ```bash
 python hanhua_v2.py --autostart on      # 开启（建登录自启项，下次登录生效）
@@ -43,13 +48,13 @@ python hanhua_v2.py --autostart status  # 看状态
 python hanhua_v2.py --autostart off     # 关闭
 ```
 
-后台守护每 0.3 秒检查一次：带调试端口运行的，引擎不在就补注入；被正常方式打开（双击图标、开始菜单）的，先关掉再带端口重启再注入，未保存的编辑会丢，和 `qidong.bat` 一样。守护日志在同目录 `shouhu.log`。仅 Windows。
+后台守护每轮结束后等待 2 秒：自动发现已验证的调试端口，引擎不在就补注入；没有端口或探测失败时只记录状态，不关闭、启动或重启 Antigravity。守护日志在同目录 `shouhu.log`。要立即注入，可直接运行启动器。
 
-注意：自动注入的响应速度还没优化好。通常双击后几秒内能完成，但赶上冷却期可能要等十几秒。想立刻看到中文，直接双击 `qidong.bat` 更快。
+**从旧版守护升级**：正在运行的旧进程不会自动加载新代码。请先 `python hanhua_v2.py --autostart off`，再 `python hanhua_v2.py --autostart on`；下次登录生效，或手动运行 `python shouhu.py --verbose`。仅更新文件而不重启旧守护，旧版自动关闭应用的行为仍可能存在。
 
 ## 原理
 
-`hanhua_v2.py` 带着调试端口启动 Antigravity，轮询 `http://127.0.0.1:9333/json` 找到主界面页，等页面真正就绪后注入一段带字典的 MutationObserver 脚本。脚本监听 DOM 变化实时替换文案；代码块、终端、编辑器、输入框、会话列表都在禁区里，不会被翻译。实测内存增加约 0.6 MB。
+`hanhua_v2.py` 复用现有实例，或在应用未运行时带调试端口启动。`cdp_discovery.py` 核实进程和本机监听端口，读取 `/json/version`、`/json`，等页面真正就绪后注入带字典的 MutationObserver 脚本。脚本监听 DOM 变化实时替换文案；代码块、终端、编辑器、输入框、会话列表都在禁区里，不会被翻译。约 0.6 MB 的内存增量是旧版较小词典的历史测量，当前版本待重新测量。
 
 为什么不用老项目的办法：[cshitian/antigravity_chinese](https://github.com/cshitian/antigravity_chinese) 针对 1.x，往 `workbench.html` 写 `<script>` 并同步 `product.json` 校验值。2.0 把 `resources/app` 打包成了 `app.asar`，界面改由本地服务渲染，那个注入点不存在了，失败还是静默的（上游 Issue #4 提过，一直没人修）。
 
@@ -57,7 +62,7 @@ python hanhua_v2.py --autostart off     # 关闭
 
 漏翻的地方只需要改 JSON，不用碰代码。
 
-1. 把 Antigravity 导航到那个页面，运行 `python caiji.py`，未翻译的英文会写进 `pending.json`
+1. 把 Antigravity 导航到那个页面，运行 `python caiji.py`，未翻译的英文会写进 `pending.json`（采集器暂不自动发现端口；非 9333 时加 `--port <端口>`）
 2. 翻译后按 `{"原文": "译文"}` 的格式加进 `dicts/`：`common.json` 放通用词，`ui_v2.json` 放 2.0 基础文案，`ui_v2_225.json` 和 `ui_v2_229.json` 分别放 2.25.25、2.29.0 的增量；同一个 key 别写进两个文件
 3. `python hanhua_v2.py --no-launch` 重新注入验证
 
@@ -89,6 +94,7 @@ Agent 统一译作智能体。下拉菜单和悬停提示只在展开或悬停�
 
 ```
 hanhua_v2.py         主脚本：加载字典、生成引擎、启动、注入、守护
+cdp_discovery.py     进程/监听端口归属校验、实例发现与确认后的定向关闭
 caiji.py             采集当前页面未翻译的英文
 shouhu.py            可选守护进程（仅 Windows）：登录自启，自动检测启动并注入
 qidong.bat           Windows 一键启动器
@@ -96,6 +102,7 @@ qidong_mac.sh        macOS 一键启动器
 qidong_mac.command   macOS 双击入口（调 qidong_mac.sh）
 dicts/               字典（common.json + ui_v2*.json，约 3500 条）
 tests/               离线词典及完整 JavaScript 引擎回归测试
+TODO.md              按顺序推进的优化清单及验证记录
 ```
 
 实现细节和踩坑记录在 [CLAUDE.md](CLAUDE.md)。

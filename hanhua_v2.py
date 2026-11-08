@@ -18,6 +18,7 @@ import re
 import argparse
 import subprocess
 import http.client
+import cdp_discovery
 
 # ★★★ 配置 ★★★
 DEFAULT_PORT = 9333
@@ -549,25 +550,15 @@ def http_json(host, port, path):
 
 
 def wait_for_debug_port(port, timeout=60):
-    """轮询 CDP 端口直到返回 page，返回 page 对象或 None"""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            pages = http_json('127.0.0.1', port, '/json')
-            pages = pages if isinstance(pages, list) else []
-            # 跳过加载页/空白页（data: URL 或 title 含 Loading），找真正的 Antigravity 主页面
-            page = next((
-                p for p in pages
-                if p.get('type') == 'page'
-                and p.get('url', '').startswith('http')
-                and not p.get('title', '').startswith('Loading')
-            ), None)
-            if page:
-                return page
-        except Exception:
-            pass
+    """等待已核实进程归属和产品身份的 CDP 页面；重试时也重新验证。"""
+    deadline = time.monotonic() + timeout
+    while True:
+        instance = cdp_discovery.find_running_instance(port)
+        if instance.page:
+            return instance.page
+        if time.monotonic() >= deadline:
+            return None
         time.sleep(0.5)
-    return None
 
 
 def cdp_inject(page, engine_js, watch_seconds=30):
@@ -689,46 +680,76 @@ def launch_antigravity(exe, port):
 
 
 def is_antigravity_running():
-    """检测是否有 Antigravity 进程在跑（不含调试端口信息）。
+    """探测失败必须报错，不能误当作没有进程而重复启动。"""
+    return bool(cdp_discovery.antigravity_pids())
 
-    Antigravity 允许多实例并存（实测无单实例锁）：端口上没有实例时直接再启一个，
-    会静默开出第二个重复窗口——用户原来的窗口保持英文，看起来就是「脚本跑了
-    没效果」。启动前先查进程，把这种情况变成一条可操作的即时错误。
 
-    Windows 输出用字节匹配：tasklist 在中文 Windows 上输出 GBK，text=True 按 UTF-8
-    解码会崩掉 reader 线程，探测静默失败。
-    """
-    try:
-        if sys.platform == 'win32':
-            out = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq Antigravity.exe"],
-                capture_output=True, timeout=5,
-                # pythonw 无控制台，不带此标志每 2 秒轮询就弹一个黑窗（守护进程场景）
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            ).stdout or b""
-            return b"antigravity.exe" in out.lower()
-        if sys.platform == 'darwin':
-            # -x 只匹配主进程名，避免 -f 扫到启动器自己的命令行
-            return subprocess.run(
-                ["pgrep", "-x", "Antigravity"],
-                capture_output=True, timeout=5,
-            ).returncode == 0
+def _confirm_restart(assume_yes):
+    print("[警告] 重启将关闭当前所有 Antigravity 实例，未保存的编辑可能丢失。")
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
         return False
-    except Exception:
-        return False  # 探测失败不拦路，维持旧行为
+    try:
+        return input("保存工作后输入 RESTART 确认重启（其他输入取消）: ").strip() == "RESTART"
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
+def prepare_instance(args):
+    instance = cdp_discovery.find_running_instance(args.port)
+    port = args.port or DEFAULT_PORT
+    if args.force_restart and instance.pids:
+        exe = find_antigravity_exe(args.install_dir)
+        if not exe:
+            raise cdp_discovery.DiscoveryError("未找到可执行文件，取消重启；请指定 --install-dir。")
+        # 非当前已验证的 CDP 端口先检查，避免关掉应用才发现无法重启。
+        if not instance.endpoint or instance.endpoint.port != port:
+            cdp_discovery.require_free_port(port)
+        if not _confirm_restart(args.yes):
+            raise cdp_discovery.DiscoveryError("重启已取消，应用未被关闭。")
+        cdp_discovery.stop_confirmed_instance(instance.pids)
+    elif instance.endpoint:
+        print(f"[复用] 已发现 Antigravity 调试端口 {instance.endpoint.port}，不重启应用。")
+        return instance.endpoint.port, instance.page
+    elif instance.pids:
+        raise cdp_discovery.DiscoveryError(
+            "Antigravity 已在运行，但未找到符合条件的调试端口。应用保持不变。\n"
+            "       请用 --port 指定端口，或保存工作后运行 --force-restart 并确认。")
+    elif args.no_launch:
+        raise cdp_discovery.DiscoveryError("未找到可复用的 Antigravity 实例（--no-launch 不会启动应用）。")
+
+    exe = find_antigravity_exe(args.install_dir)
+    if not exe:
+        raise cdp_discovery.DiscoveryError("未找到 Antigravity，请用 --install-dir 指定安装目录或 .app。")
+    cdp_discovery.require_free_port(port)
+    # 确认期间或发现之后若又有应用启动，不能再开重复实例。
+    if cdp_discovery.antigravity_pids():
+        raise cdp_discovery.DiscoveryError("检测到新的 Antigravity 实例，请重试以安全复用。")
+    if launch_antigravity(exe, port) is None:
+        raise cdp_discovery.DiscoveryError("Antigravity 启动失败，请检查安装路径与权限。")
+    return port, None
 
 
 def main():
     parser = argparse.ArgumentParser(description="Antigravity 2.0 运行时汉化工具（CDP 注入）")
     parser.add_argument("--install-dir", help="Antigravity 安装目录或 Antigravity.exe 路径（默认自动探测）")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"调试端口（默认 {DEFAULT_PORT}）")
+    parser.add_argument("--port", type=int, help=f"指定调试端口；省略则自动发现，首次启动用 {DEFAULT_PORT}")
     parser.add_argument("--no-launch", action="store_true",
                         help="不启动 Antigravity，只连已有调试端口注入（需已带端口启动）")
     parser.add_argument("--watch", type=int, default=30,
                         help="注入后守护多少秒（页面重载会自动补注，0=不守护，默认 30）")
     parser.add_argument("--autostart", choices=["on", "off", "status"],
-                        help="自动注入开关：登录自启守护进程，任何方式启动反重力都自动注入")
+                        help="自动注入开关：登录自启守护进程，只复用已有调试端口")
+    parser.add_argument("--force-restart", action="store_true", help="保存工作后，确认关闭已有实例并重启")
+    parser.add_argument("--yes", action="store_true", help="与 --force-restart 同用，明确确认可能丢失未保存内容")
     args = parser.parse_args()
+    if args.port is not None and not 1 <= args.port <= 65535:
+        parser.error("--port 必须在 1 到 65535 之间")
+    if args.force_restart and (args.no_launch or args.autostart):
+        parser.error("--force-restart 不能与 --no-launch / --autostart 同用")
+    if args.yes and not args.force_restart:
+        parser.error("--yes 只能与 --force-restart 同用")
 
     if args.autostart:
         # 委托给 shouhu.py（启动项指向它，开关逻辑也放在它那边）
@@ -748,32 +769,14 @@ def main():
         print("[错误] 未加载到任何字典，请检查 dicts/ 目录")
         sys.exit(1)
 
-    # 2. 定位 / 启动 Antigravity
-    exe = find_antigravity_exe(args.install_dir)
-    if not args.no_launch:
-        if not exe:
-            print("[错误] 未找到 Antigravity。请用 --install-dir 指定安装目录或 .app。")
-            sys.exit(1)
-        existing = wait_for_debug_port(args.port, timeout=3)
-        if existing:
-            print(f"[提示] 端口 {args.port} 已有页面，直接复用（Antigravity 已在运行？）")
-        elif is_antigravity_running():
-            print(f"[错误] Antigravity 已在运行，但调试端口 {args.port} 上没有实例。")
-            print("       此时直接启动只会多开一个重复窗口（原窗口仍是英文）。")
-            if sys.platform == "darwin":
-                print("       请先关闭它再运行（qidong_mac.sh 会自动关闭旧实例），")
-            else:
-                print("       请先关闭它再运行本脚本（qidong.bat 会自动关闭旧实例），")
-            print("       或用 --port 指定它实际开放的调试端口。")
-            sys.exit(1)
-        elif launch_antigravity(exe, args.port) is None:
-            # 不检查返回值的话，启动失败后还要白等 60 秒才报一个"端口没就绪"的误导性错误
-            print("[错误] Antigravity 启动失败，请检查安装路径与权限。")
-            sys.exit(1)
-
-    # 3. 等待端口
-    print(f"[等待] 等待 CDP 端口 {args.port} 就绪...")
-    page = wait_for_debug_port(args.port, timeout=60)
+    # 2. 优先复用；任何关闭应用的行为都需显式选项和确认。
+    try:
+        port, page = prepare_instance(args)
+        print(f"[等待] 等待 CDP 端口 {port} 就绪...")
+        page = page or wait_for_debug_port(port, timeout=60)
+    except cdp_discovery.DiscoveryError as exc:
+        print(f"[错误] {exc}")
+        sys.exit(1)
     if not page:
         print("[错误] 超时未等到调试端口。请确认 Antigravity 以 --remote-debugging-port 启动。")
         sys.exit(1)
@@ -794,7 +797,11 @@ def main():
         except Exception as e:
             print(f"[重试] 连接中断（{type(e).__name__}），重新探测页面... ({attempt + 1}/3)")
             time.sleep(2)
-            page = wait_for_debug_port(args.port, timeout=30)
+            try:
+                page = wait_for_debug_port(port, timeout=30)
+            except cdp_discovery.DiscoveryError as discovery_error:
+                print(f"[错误] {discovery_error}")
+                sys.exit(1)
             if not page:
                 print("[错误] 页面已消失，Antigravity 可能已退出。")
                 sys.exit(1)

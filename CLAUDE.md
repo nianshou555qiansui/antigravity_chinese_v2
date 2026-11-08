@@ -9,7 +9,7 @@ Antigravity，连 Chrome DevTools 协议（CDP）把一段 MutationObserver 翻�
 **不修改任何安装文件**（不碰 `Antigravity.exe`、`app.asar`、`product.json`），因此没有还原逻辑，
 官方更新也不会破坏安装。
 
-依赖：Python 3 + `websockets`（本机实测 Python 3.14.7 / websockets 16.0）。无构建；离线测试使用标准库 `unittest` + Node.js。
+依赖：Python 3.10+ + `websockets`（本机实测 Python 3.14.7 / websockets 16.0）。无构建；离线测试使用 Python 3.11+ 标准库 `unittest` + Node.js。
 当前适配 Antigravity **2.29.0**（2026-11）。官方版本号从调试端口 `/json/version` 的 User-Agent 读：
 `Antigravity/2.29.0`。本轮 Windows 实机注入通过；macOS 未实机验证。
 
@@ -24,9 +24,10 @@ Antigravity，连 Chrome DevTools 协议（CDP）把一段 MutationObserver 翻�
 ## 常用命令
 
 ```bash
-python hanhua_v2.py                      # 自动探测 + 启动 + 注入（qidong.bat / qidong_mac.sh 就是调它）
+python hanhua_v2.py                      # 自动发现并复用；没有进程时启动（启动器仅委托）
 python hanhua_v2.py --no-launch          # 只注入到已带调试端口运行的实例（开发时最常用）
 python hanhua_v2.py --watch 0            # 关掉守护，注入完立刻退出
+python hanhua_v2.py --force-restart       # 保存工作后输入 RESTART 确认；非交互需显式加 --yes
 python hanhua_v2.py --install-dir "D:\Antigravity" --port 9333
 python hanhua_v2.py --install-dir "/Applications/Antigravity.app"
 python hanhua_v2.py --autostart on|off|status  # 自动注入开关（守护 shouhu.py，仅 Windows）
@@ -63,9 +64,10 @@ hanhua_v2.py     主脚本：加载字典 → 生成引擎 JS → 启动 Antigra
   ├ wait_for_debug_port() 轮询 /json 找主界面页
   └ cdp_inject()        等就绪 → 注册 document-start 脚本 → 注入 → 守护补注
 caiji.py         界面文本采集器（CDP 抓页面英文 → pending.json；--misses 拉取引擎未命中日志 → misses.json）
-shouhu.py        可选守护进程（仅 Windows）：登录自启，检测启动→带端口重启→注入
-qidong.bat           Windows 一键启动器（taskkill → 调 hanhua_v2.py）
-qidong_mac.sh        macOS 一键启动器（killall → 调 hanhua_v2.py）
+cdp_discovery.py  进程归属、回环端口及产品校验；显式确认后的定向关闭
+shouhu.py        可选守护进程（仅 Windows）：发现已有调试端口→补注入，不启动/关闭应用
+qidong.bat           Windows 一键启动器（只调 hanhua_v2.py，保留错误退出码）
+qidong_mac.sh        macOS 一键启动器（只调 hanhua_v2.py，保留错误退出码）
 qidong_mac.command   macOS 双击入口
 dicts/*.json         字典，格式 {"英文原文": "中文译文"}
 README.md            面向用户的门面文档（用法、原理、限制）；改 CLI 参数或用户可见行为时同步
@@ -78,19 +80,22 @@ tests/               unittest + Node.js 完整引擎离线回归（无需浏览�
 字符串形式存在于 `hanhua_v2.py` 里，靠 `DICT_PLACEHOLDER` 占位替换注入字典。改 JS 时
 Python 的字符串转义层会介入，见下文「转义陷阱」。
 
-**平台分支**：`candidate_paths()` / `launch_antigravity()` / `is_antigravity_running()` 三处按
-`sys.platform` 分 Windows / macOS 两支，加平台相关逻辑时三处要同步改。macOS 支持来自
-PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用「伪造 `sys.platform` + 假 `.app`
-目录树」验证纯逻辑，Windows 侧则必须真机跑完整流程确认无回归。
+**平台分支**：`candidate_paths()` / `launch_antigravity()` 和 `cdp_discovery.py` 的进程/端口枚举分 Windows / macOS。
+Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只检查 Antigravity 拥有的回环监听端口，不扫描其他程序。
+当前 macOS 分支有离线 mock 验证，未进行真机验证；更改平台逻辑须补回归。
 
-### 启动前的多实例守卫
+### 安全启动与实例复用
 
-**Antigravity 没有单实例锁**（实测可并存多窗口）。若用户已经用正常方式开着 Antigravity，
-脚本再带端口启一个，只会静默多出一个重复窗口——原窗口保持英文，用户看到的就是
-「脚本跑了没效果」，而且极难自查。`main()` 因此在启动前先 `wait_for_debug_port(timeout=3)`
-探端口：端口有页面就复用；端口没有但 `is_antigravity_running()` 为真，就**直接报错退出**
-并提示先关旧实例或用 `--port` 指它实际开放的端口。别把这个检查当成多余的礼貌——
-去掉它就会退回上面那种静默失败。
+`prepare_instance()` 优先复用已验证的实例，即使找不到安装路径也可注入。省略 `--port` 时自动发现；
+显式指定后不回退其他端口。多个有效端口要求明确选择。发现有效 CDP 但页面未就绪时只等待，不启动新实例。
+探测失败必须报错，不能当成“没有进程”。默认有进程但无端口时保持应用不变。
+
+只有 `--force-restart` + 交互输入 `RESTART`（或显式 `--yes`）才允许关闭已确认的 PID；
+不能用按映像名关闭全部进程的 `/IM` / `killall`。重启前先检查目标端口、可执行文件和进程快照；
+确认期间新增进程、关闭失败或仍有进程存活时，不启动新实例。启动器不再自行杀进程，失败不能打印 Done。
+
+`wait_for_debug_port()` 每次重试都重新验证进程归属、产品 User-Agent 和本地 WebSocket 地址。
+当前优先精确标题 Antigravity，多本地页面有歧义则拒绝；完整主界面特征识别与多窗口支持见 TODO 第 2 项。
 
 ### 注入失败的显式上报
 
@@ -114,25 +119,14 @@ PR #1（贡献者真机验证），维护侧没有 Mac：改 darwin 分支时用
 
 ### 守护进程（shouhu.py，可选，仅 Windows）
 
-`--autostart on` 在 shell:startup 建 .lnk → pythonw 无窗口常驻，每 0.3 秒一轮：
+`--autostart on` 建登录启动项，守护每轮结束后等待 2 秒。自动发现/验证端口后复用 `cdp_inject()`；
+没有端口、页面未就绪、探测或注入失败都只等待/记录状态，不启动、关闭或重启 Antigravity。
+旧版的自动 taskkill、冷却时间和失败次数安全阀已删除；不要重新引入静默强制重启。
 
-- 端口开着：探 `window.__ag_hanhua_engine__`，不在就现编译字典注入（watch=8s）
-- 端口开着但页面没就绪（title 还是 Loading）：等，不杀
-- 端口没开但进程在（正常双击启动）：taskkill → 等进程真消失（~0.3s）→ 带端口重启
-
-用户实机踩过的坑（别再踩）：
-
-- pythonw 无控制台，所有子进程（tasklist/taskkill/powershell）必须带
-  `CREATE_NO_WINDOW`，否则 0.3 秒一轮的轮询变成无限闪黑窗
-- 轮询的进程检查用 ctypes WinAPI 直查（`EnumProcesses`，~1ms），
-  别换回 tasklist（实测一次 286ms，高频轮询扛不住）
-- 注入路径只复用 `cdp_inject()`，守护不得另写一套
-- 安全阀只累计**失败**的杀重启（注入成功即清零）——数总次数会把正常反复
-  开关应用的用户误判成死循环，守护自己退出（表现为「不汉化了」）
-- KILL_GRACE 冷却 15 秒：曾设 90 秒，用户重开应用要干等到期才被处理
-  （表现为「要等一分钟」）
-- taskkill /F 是硬杀走不到 finally，lock 会残留 → 启动时按 PID 存活检查接管
-- shouhu.log / shouhu.lock 都在 .gitignore
+- pythonw 子进程必须带 `CREATE_NO_WINDOW`，避免闪黑窗。
+- 状态变化才记日志，探测失败不是“进程不存在”；连接复用和请求超时后续按 TODO 第 3 项处理。
+- 旧守护进程不会热更新，升级后需 `--autostart off` 再 `--autostart on`，重新登录或手动启动新守护。
+- `shouhu.log` / `shouhu.lock` 不提交；停止守护不代表停止 Antigravity。
 
 ### 翻译引擎
 
@@ -331,11 +325,9 @@ issue 就泄露了，`_mask_proxy()` 就是干这个的。
 - **本机开了 HTTP 代理（Clash 等）会让 CDP 连不上**：`urllib` 会把 `http://127.0.0.1:9333`
   的请求打进代理。`main()` 开头的 `_bypass_proxy_for_local_cdp()` 已把本机地址并入
   `NO_PROXY`，新增代码别在它之前对调试端口发请求。
-- **Windows 上 `tasklist` 输出必须按字节匹配，别用 `text=True`。** 中文 Windows 的 tasklist
-  输出是 GBK，`text=True` 按 UTF-8 解码会崩掉 reader 线程，探测**静默**失败（返回 False），
-  表现为「明明在跑却说不存在」。`is_antigravity_running()` 用 `capture_output` 拿 bytes 再
-  `.lower()` 找 `b"antigravity.exe"`。同理该子进程要带 `CREATE_NO_WINDOW`——主脚本里
-  只调一次无所谓，但这段逻辑被守护进程复用，无控制台环境下会闪黑窗。
+- **Windows 进程枚举必须容忍本地编码。** `cdp_discovery.py` 读取 `tasklist /FO CSV /NH` 的原始 bytes，
+  用替换式解码解析 ASCII 可执行文件名/PID，忽略本地化列，避免 GBK 解码异常；命令失败或无有效表须报错，不能当成无进程。
+  所有后台子进程带 `CREATE_NO_WINDOW`，不能为了复用端口引入闪黑窗。
 - **不要轻信自己写的扫描脚本。** 这个项目里多次出现「扫描说没问题、用户说有问题」，
   每次都是扫描器自身有 bug。以用户看到的界面为准。
 - **改完 CLI 参数或用户可见行为，记得同步 `README.md`**——它是这个项目对外的唯一门面，
