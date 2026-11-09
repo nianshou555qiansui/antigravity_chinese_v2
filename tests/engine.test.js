@@ -12,6 +12,7 @@ if (require.main === module) {
             const payload = JSON.parse(chunks.join(""));
             run(payload);
             runGuardTests(payload);
+            runReplacementTests(payload);
             process.stdout.write(`ok: ${Object.keys(payload.dictionary).length} entries\n`);
         } catch (error) {
             console.error(error.stack || error);
@@ -25,6 +26,9 @@ function makeHarness(hasBody = true) {
     const timers = [];
     const intervals = new Map();
     const events = new Map();
+    const pendingRecords = new Map();
+    let batchDepth = 0;
+    let deliveringRecords = false;
 
     class NodeStub {
         constructor(type) {
@@ -162,7 +166,12 @@ function makeHarness(hasBody = true) {
                 if (observer.roots.has(current)) {
                     const options = observer.options.get(current);
                     if (record.type !== "attributes" || !options.attributeFilter
-                        || options.attributeFilter.includes(record.attributeName)) observer.callback([record]);
+                        || options.attributeFilter.includes(record.attributeName)) {
+                        if (batchDepth || deliveringRecords) {
+                            if (!pendingRecords.has(observer)) pendingRecords.set(observer, []);
+                            pendingRecords.get(observer).push(record);
+                        } else observer.callback([record]);
+                    }
                     break;
                 }
                 current = current.parentNode;
@@ -210,6 +219,26 @@ function makeHarness(hasBody = true) {
     return {
         window, document, context, observers, timers, intervals, ElementStub, TextStub, FragmentStub,
         inject(source) { return vm.runInContext(source, context, { timeout: 20000 }); },
+        clearTimeouts() { timers.length = 0; },
+        batch(callback) {
+            batchDepth++;
+            try { callback(); }
+            finally {
+                batchDepth--;
+                if (!batchDepth && !deliveringRecords) {
+                    deliveringRecords = true;
+                    try {
+                        while (pendingRecords.size) {
+                            const records = [...pendingRecords];
+                            pendingRecords.clear();
+                            for (const [observer, batch] of records) observer.callback(batch);
+                        }
+                    } finally {
+                        deliveringRecords = false;
+                    }
+                }
+            }
+        },
         tick(ms) {
             for (const timer of timers.splice(0).filter(item => item.ms <= ms)) timer.fn();
             for (const interval of [...intervals.values()]) if (interval.ms <= ms) interval.fn();
@@ -492,4 +521,25 @@ function runGuardTests({ guarded, forced, probe, diagnosis, dictionary }) {
     readonly.tick(3000);
     assert.equal(readonly.window.__ag_hanhua_engine__.state.stopped, true,
         "normal engine timer, not diagnosis, enforces changed identity");
+}
+
+function runReplacementTests({ engine, replacementEngine }) {
+    const h = makeHarness();
+    const root = h.document.body.appendChild(new h.ElementStub("div"));
+    const button = root.appendChild(new h.ElementStub("button", { title: "File" }));
+    const text = button.appendChild(new h.TextStub("File"));
+    h.inject(engine);
+    assert.equal(text.nodeValue, "文件");
+    assert.equal(button.getAttribute("title"), "文件");
+
+    const previous = h.window.__ag_hanhua_engine__;
+    h.inject(replacementEngine);
+    assert.equal(previous.state.stopped, true);
+    assert.equal(text.nodeValue, "文件", "reinjecting cannot translate already translated Chinese again");
+    assert.equal(button.getAttribute("title"), "文件", "translated attributes remain stable on reinjection");
+
+    text.nodeValue = "File";
+    button.setAttribute("title", "File");
+    assert.equal(text.nodeValue, "文件更新", "new source mutations use the replacement dictionary");
+    assert.equal(button.getAttribute("title"), "文件更新");
 }

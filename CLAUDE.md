@@ -63,7 +63,7 @@ python -c "b=open('qidong.bat','rb').read();assert not [x for x in b if x>127],'
 ```
 hanhua_v2.py     主脚本：加载字典 → 生成引擎 JS → 启动 Antigravity → CDP 注入 → 守护
   ├ load_dictionary()   合并 dicts/*.json，对 key 做 normalize_text()
-  ├ build_engine_js()   把字典嵌进一段 IIFE 模板字符串（整个翻译引擎都在这里面）
+  ├ build_engine_js()   加载 engine_template.js 并嵌入字典/隐私策略
   └ prepare_instance() 复用实例或安全启动，关闭应用必须显式确认
 caiji.py         主窗口来源统计与受限静态标签导出；旧版 raw misses 拒绝读取
 privacy_policy.py  引擎/采集器共享 DOM 保护与属性许可，读取前判定
@@ -85,9 +85,9 @@ requirements.txt     依赖清单（只有 websockets）
 tests/               unittest + Node.js 完整引擎离线回归（无需浏览器或额外 npm 包）
 ```
 
-**注意 `build_engine_js()` 的返回值是字符串**：整个翻译引擎（约 360 行 JS）以 Python 三引号
-字符串形式存在于 `hanhua_v2.py` 里，靠 `DICT_PLACEHOLDER` 占位替换注入字典。改 JS 时
-Python 的字符串转义层会介入，见下文「转义陷阱」。
+`engine_template.js` 是无需构建的独立 IIFE 源文件。`build_engine_js()` 从脚本同目录读取，
+PyInstaller 部署则回退到 `_MEIPASS`；通过 `DICT_PLACEHOLDER` 与 `PRIVACY_PLACEHOLDER` 嵌入数据。
+改模板不再经过 Python 三引号转义层；仍需运行 Node.js 语法与完整引擎回归。
 
 **平台分支**：`candidate_paths()` / `launch_antigravity()` 和 `cdp_discovery.py` 的进程/端口枚举分 Windows / macOS。
 Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只检查 Antigravity 拥有的回环监听端口，不扫描其他程序。
@@ -156,7 +156,7 @@ Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只�
 - 连接级失败按目标独立退避，只有 fresh discovery 后才允许重连；超时/断线淘汰本目标会话，不能断掉健康窗口。
 - 进程/端点归属、目标地址改变或目标消失须关闭旧会话；发现失败也清空连接池，不能继续用缓存 URL 注入。
 - 状态/数量/固定原因码变化才记日志，退避秒数不参与去重；探测失败不是“进程不存在”，异常原文可能有私人数据，不打印。
-- 字典不再每轮重新加载；编辑词典后手动启动器可刷新当前窗口，还需重启守护才能更新以后补注所用字典，热更新留 TODO 第 7 项。
+- 字典不再每轮重新加载；编辑词典后手动启动器可刷新当前窗口，还需重启守护才能更新以后补注所用字典。当前不做守护词典热更新，避免状态复杂化；重注入旧观察器会停止，新旧词典下已翻译文本保持稳定并由回归测试覆盖。
 - 旧守护进程不会热更新，升级后需 `--autostart off` 再 `--autostart on`，重新登录或手动启动新守护。
 - `shouhu.log` / `shouhu.lock` 不提交；停止守护不代表停止 Antigravity。
 
@@ -189,14 +189,14 @@ Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只�
 
 **监听策略**：`MutationObserver` 同时听 `childList` + `characterData` + `attributes`。
 `characterData` **必须听**——React 重渲染直接改写文本节点，不听就会被改回英文。
-另有每 3 秒一次的全量重扫兜底（下拉菜单等临时弹出内容靠它）。
+同批次重复根节点和属性名会合并；若同一目标同时有边界和文案属性变化，以最终 DOM 状态递归重判子树；普通获准属性仅处理该属性。
+保留 2/5 秒启动兜底及 3 秒属性重扫；不做周期性整页文本递归。
 
-**性能**：`lastSeen` WeakMap 记住每个文本节点上次处理过的值，没变就跳过。这是关键优化——
-没有它，每 3 秒的全量重扫都要对每个节点做一遍昂贵匹配。
+**性能**：`lastSeen` WeakMap 记住每个文本节点上次处理过的值，变更入口先做隐私祖先检查再读取/匹配。
+`tests/test_performance_baseline.py` 用合成 DOM 记录初扫、批量文本/属性变更和空闲属性兜底耗时；数字只用于同环境前后比较，不设毫秒 CI 阈值，也不代表实机 UI 性能。
 
-实测占用（2026-08 在约 1150 条词条、667 个 DOM 元素下测得；字典 2026-10 已增至约 2900 条，
-下列数字是最低值，改动字典后应重测）：JS 堆净增 586 KB（≈ Antigravity 总内存 640 MB 的 0.09%）；
-全量重扫 0.4~0.7 ms；11 秒采样期内主线程长任务 0 次。
+历史实测占用（2026-08 在约 1150 条词条、667 个 DOM 元素下测得）：JS 堆净增 586 KB；
+全量重扫 0.4~0.7 ms；11 秒采样期内主线程长任务 0 次。当前词典及扫描策略不同，需在安全实机环境重新测量。
 **量堆增量别直接比前后差值**——应用自身堆在 52~55 MB 间波动，几百 KB 会被噪声淹没；
 正确做法是在页面里再构造一份等价结构、前后立刻取样取差值。
 
@@ -325,6 +325,15 @@ title/aria-label 不自动视为固定元数据。按钮/明确控件语义及�
    `Search conversations with` 等片段经 bundle / DOM 确认是图标两侧的实际文本节点，不能把含 Markdown 图标的整句原始消息直接当 DOM 词条。
    引擎补齐既有 Shadow DOM 的遍历/观察与 host 禁区回溯、可编辑属性枚举保护，并让 JS 空白归一集合与 Python 一致。
 
+现在可用只读 `audit_bundle.py --bundle <本地 main.js> --version <已确认版本> --output audit-report.json`
+固化这套流程。它不联网、不连 CDP、不读取运行页面；报告包含 bundle/词典 SHA-256、字符串位置与
+属性/直接文本证据，双向 diff 分类为 `new-candidate`、`possible-rewrite`、`not-found-in-bundle`，
+另列动态模板、术语、占位符和归一化重复键。相似度默认 `>=0.85` 且只能人工复核；`not-found` 可能是
+改写、条件模块或旧词条，不能自动删除。不要把 `--output` 指向词典目录，报告也不能自动回写字典。
+
+CI 运行 `python -B -m unittest discover -s tests -v`、`compileall`、启动器 ASCII 检查及提交空白检查；
+独立浏览器作业安装 Playwright Chromium，运行 `tests/test_browser_fixture.py` 的合成页面测试。
+
 **三条铁律**：
 
 1. **只写完整的 UI 字符串，绝不写半截短语。** 加 `safety barriers` 这种碎片，
@@ -359,9 +368,10 @@ issue 就泄露了，`_mask_proxy()` 就是干这个的。
 
 ## 转义陷阱（这个项目最容易踩的坑）
 
-翻译引擎是 Python 字符串里的 JS，**反斜杠要过两层**。
+`engine_template.js` 是独立 JavaScript 文件，不经过 Python 字符串转义。
+但诊断/身份表达式和通过 Python 拼装的 CDP 表达式仍有 Python 与 JavaScript 两层，**反斜杠要过两层**。
 
-- Python 三引号串里写 `\s` 会触发 `SyntaxWarning` 且语义可疑；写 `\\s` 才会在 JS 里得到 `\s`。
+- Python 普通三引号串里写 `\s` 会触发 `SyntaxWarning` 且语义可疑；写 `\\s` 才会在 JS 里得到 `\s`。改引擎优先改 `engine_template.js`，勿把它重新内嵌回 Python。
 - 写 CDP 调试脚本时更要小心：转义层一丢反斜杠，`/\s+/g` 就变成 `/s+/g`——
   把文本里每个 `s` 换成空格。曾因此得到 "Choo e"、"ecurity"、"Be t of N" 这种**假残缺**，
   据此下了完全错误的结论，还往字典里加了一批永远匹配不上的坏键

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -17,6 +18,20 @@ import diagnostics
 
 
 class TranslationTests(unittest.TestCase):
+    def test_engine_template_loads_from_source_and_bundle_fallback(self):
+        template = (ROOT / "engine_template.js").read_text(encoding="utf-8")
+        with mock.patch.object(hanhua_v2, "__file__", str(ROOT / "hanhua_v2.py")):
+            self.assertEqual(hanhua_v2._load_engine_template(), template)
+
+        with mock.patch.object(hanhua_v2, "__file__", str(ROOT / "missing" / "hanhua_v2.py")), \
+                mock.patch.object(hanhua_v2.sys, "_MEIPASS", str(ROOT), create=True):
+            self.assertEqual(hanhua_v2._load_engine_template(), template)
+
+        with mock.patch.object(hanhua_v2, "__file__", str(ROOT / "missing" / "hanhua_v2.py")), \
+                mock.patch.object(hanhua_v2.sys, "_MEIPASS", str(ROOT / "missing"), create=True):
+            with self.assertRaisesRegex(FileNotFoundError, "engine_template.js"):
+                hanhua_v2._load_engine_template()
+
     def test_dictionary_files(self):
         raw_keys = {}
         normalized_keys = {}
@@ -86,6 +101,7 @@ class TranslationTests(unittest.TestCase):
             norm_samples.append([raw, dictionary.get(normalized, raw), normalized])
         payload = {
             "engine": hanhua_v2.build_engine_js(dictionary),
+            "replacementEngine": hanhua_v2.build_engine_js({"File": "文件更新"}),
             "dictionary": dictionary,
             "normSamples": norm_samples,
         }

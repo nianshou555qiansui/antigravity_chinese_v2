@@ -31,6 +31,15 @@ const c=/["']nope["']/g; const d=`plain \` quote`;'''
                 result = audit._scan_bundle(source)
                 self.assertEqual([item["text"] for item in result], ["After"])
 
+    def test_regex_after_arrow_and_inside_template_expression_is_skipped(self):
+        source = '''const matcher = value => /["']secret["']/.test(value);
+const template = `${items.map(value => /["']hidden["']/.test(value))}`;
+const after = "After";'''
+        result = audit._scan_bundle(source)
+        strings = [item["text"] for item in result if item["kind"] == "string"]
+        self.assertEqual(strings, ["After"])
+        self.assertEqual([item["kind"] for item in result], ["template", "string"])
+
     def test_unterminated_regex_fails_closed(self):
         with self.assertRaisesRegex(audit.AuditError, "unterminated JavaScript regular expression"):
             audit._scan_bundle('if (ok) /unterminated\nconst after="After";')

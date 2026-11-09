@@ -66,7 +66,7 @@ python hanhua_v2.py --autostart off     # 关闭
 
 后台守护每轮重新验证进程、端口和窗口，复用有效的 CDP 连接，仅为引擎缺失的主窗口补注入。健康时每轮后等 5 秒，加载或局部失败时等 2 秒；没有应用、端口、窗口或发现失败时逐步退避到 30 秒。单个窗口断线/超时会独立退避并在下一次身份验证后重连，不影响其他窗口；不关闭、启动或重启 Antigravity。日志只在状态/数量/错误类别变化时记录到 `shouhu.log`。
 
-守护启动时只加载一次词典并生成引擎。改词典后可运行启动器立即刷新当前窗口；要让后台守护以后补注时也用新词典，还需重启守护。尚不支持词典热更新。
+守护启动时只加载一次词典并生成引擎。改词典后可运行启动器立即刷新当前窗口；要让后台守护以后补注时也用新词典，还需重启守护。尚不支持词典热更新。重注入会断开旧观察器并重建引擎；重复精确翻译、属性回写及含变量模板由回归测试覆盖。
 
 **从旧版守护升级**：正在运行的旧进程不会自动加载新代码。请先 `python hanhua_v2.py --autostart off`，再 `python hanhua_v2.py --autostart on`；下次登录生效，或手动运行 `python shouhu.py --verbose`。仅更新文件而不重启旧守护，旧版自动关闭应用的行为仍可能存在。
 
@@ -76,7 +76,7 @@ python hanhua_v2.py --autostart off     # 关闭
 
 `cdp_connection.py` 在单个事件循环中管理逐窗口连接、请求超时和断线退避。健康窗口只发送小型探测表达式，不反复传整份词典；确认引擎缺失后，才发送再次校验身份的完整注入表达式。命令结束或守护退出时关闭连接，窗口/端口归属改变时淘汰旧会话。
 
-脚本监听 DOM 变化实时替换文案。引擎和采集器共用 `privacy_policy.py`：在读取内容前排除已识别的代码、终端、编辑器、消息、附件和用户标题，保护跨 Shadow DOM 与 slot 继承。普通输入框只允许翻译提示属性，不读写输入值。约 0.6 MB 的内存增量是旧版较小词典的历史测量，当前版本待重新测量。
+脚本监听 DOM 变化实时替换文案。文本与子树只在初始扫描或对应变更时处理；普通获准属性按属性定向更新，隐私边界属性变化才重扫子树。3 秒兜底仅重扫可翻译属性，不重复递归全页面文本。引擎和采集器共用 `privacy_policy.py`：在读取内容前排除已识别的代码、终端、编辑器、消息、附件和用户标题，保护跨 Shadow DOM 与 slot 继承。普通输入框只允许翻译提示属性，不读写输入值。性能测试是合成 DOM 的本地基线，不代表真实 Antigravity 页面耗时。约 0.6 MB 的内存增量是旧版较小词典的历史测量，当前版本待重新测量。
 
 为什么不用老项目的办法：[cshitian/antigravity_chinese](https://github.com/cshitian/antigravity_chinese) 针对 1.x，往 `workbench.html` 写 `<script>` 并同步 `product.json` 校验值。2.0 把 `resources/app` 打包成了 `app.asar`，界面改由本地服务渲染，那个注入点不存在了，失败还是静默的（上游 Issue #4 提过，一直没人修）。
 
@@ -125,6 +125,17 @@ python audit_bundle.py --bundle path/to/main.js --version 2.29.0 --output audit-
 
 离线回归检查：`python -m unittest discover -s tests -v`（需本机有 Node.js，不会启动或修改 Antigravity）。改完词典或引擎都运行一次。GitHub Actions 的 `Offline regression` 工作流会在 Python 3.11、3.12、3.13 上重复运行测试、语法检查和启动器编码检查，并在独立作业中安装 Chromium 运行无用户数据的浏览器夹具。
 
+### 验证范围
+
+离线测试覆盖引擎身份检查、隐私边界、多窗口调度、采集器、bundle 审计、守护连接、重注入稳定性，以及合成 DOM 的初始扫描/变更批次/空闲属性兜底。浏览器夹具使用无账号和用户内容的本地页面。以下场景仍需在用户确认可用的真实环境中验收，离线测试不替代它们：
+
+2026-11-09 Windows Antigravity 2.29.0：安全复用端口 9333，`--no-launch --watch 0` 向一个已确认主窗口补注，随后 `--doctor` 通过。默认采集和漏翻来源计数均以内存执行，未导出候选文本，字典 SHA-256 前后相同。离线 bundle 审计的 `main.js` SHA-256 为 `8d1196a22cd3eb9779e8faf5c31eb732d3df8d9d037b685733ed4e3d6cdfb5a2`，匹配已记录的 2.29.0 bundle；审计未改字典。报告有 3,995 个新候选及 38 个可能改写，未逐条人工复核或自动收录。
+
+- 多个主窗口、新开/重载窗口均能补注；外部网页、预览页和独立设置页不注入。
+- 实际消息、附件、标题、输入、代码及未知 tooltip 在目标版本中保持原样，固定 UI 控件仍正常翻译。
+- 只对明确确认版本匹配的本地 `main.js` 运行 `audit_bundle.py`，核对报告哈希/候选并确认词典文件哈希未变。安装包版本与仓库适配版本不一致时，不得把审计结果当作目标版本验收。
+- 查看推送后 GitHub Actions 的 `Offline regression` 和 `Browser fixture` 两个作业均通过。
+
 旧版 `pending.json` / `misses.json` 可能仍有私人原文，新代码不会自动清理历史文件；请自行检查。新报告及原子写入临时文件均在 `.gitignore` 中，勿提交。
 
 ## 限制
@@ -154,7 +165,7 @@ dicts/               字典（common.json + ui_v2*.json，约 3500 条）
 tests/               离线词典、完整引擎、目标识别及多窗口回归测试
 tests/browser_fixture.html  无用户数据的异步/Shadow DOM/输入保护夹具
 audit_bundle.py      本地 bundle 版本审计器（只读，不连接 CDP）
-TODO.md              按顺序推进的优化清单及验证记录
+engine_template.js   独立 JavaScript 引擎模板；Python 源码与打包环境均可加载
 ```
 
 实现细节和踩坑记录在 [CLAUDE.md](CLAUDE.md)。

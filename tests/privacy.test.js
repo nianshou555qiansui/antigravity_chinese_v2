@@ -267,6 +267,43 @@ function testBoundaryChanges(payload) {
     assert.equal(control.element.getAttribute("title"), "Save");
 }
 
+function testMutationRouting(payload) {
+    const h = makeHarness();
+    const fixture = add(h, h.document.body, "button", { title: "File" }, "File");
+    const shadowRoot = fixture.element.attachShadow({ mode: "open" });
+    const shadow = add(h, shadowRoot, "span", {}, "File");
+    h.inject(payload.engine);
+    assert.equal(fixture.node.nodeValue, payload.dictionary.File);
+    assert.equal(shadow.node.nodeValue, payload.dictionary.File);
+
+    let descendantReads = 0;
+    for (const node of [fixture.node, shadow.node]) {
+        let value = node.nodeValue;
+        Object.defineProperty(node, "nodeValue", {
+            get() { descendantReads++; return value; },
+            set(next) { value = next; },
+        });
+    }
+    h.batch(() => {
+        fixture.element.setAttribute("title", "File");
+        fixture.element.setAttribute("title", "Save");
+    });
+    assert.equal(fixture.element.getAttribute("title"), payload.dictionary.Save);
+    assert.equal(descendantReads, 0, "ordinary attribute changes do not traverse light or shadow descendants");
+
+    h.batch(() => {
+        fixture.element.setAttribute("class", "terminal");
+        fixture.node.nodeValue = "File";
+        fixture.element.setAttribute("title", "File");
+    });
+    assert.equal(fixture.node.nodeValue, "File", "new privacy boundaries are rechecked before text reads");
+    h.batch(() => {
+        fixture.element.removeAttribute("class");
+        fixture.node.nodeValue = "Save";
+    });
+    assert.equal(fixture.node.nodeValue, payload.dictionary.Save, "removing a boundary rescans newly safe text");
+}
+
 function testStaticCollection(payload) {
     const h = makeHarness();
     const p = policy(h, payload);
@@ -371,6 +408,7 @@ const tests = {
     attributes: testInputAndControlAttributes,
     shadow: testShadowDepthAndCycles,
     mutation: testBoundaryChanges,
+    routing: testMutationRouting,
     collection: testStaticCollection,
     misses: testMissCounts,
 };

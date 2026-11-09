@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Root sources include `hanhua_v2.py` (engine), `cdp_*.py` (CDP), `diagnostics.py`, `guard_runtime.py`, `caiji.py`, `privacy_policy.py`, and `audit_bundle.py` (offline bundle audit). `shouhu.py` is the Windows watchdog. Dictionaries are in `dicts/`, tests in `tests/`, assets in `docs/`. See `CLAUDE.md`.
+Root sources include `hanhua_v2.py` (runtime/engine loader), `engine_template.js` (editable translation engine), `cdp_*.py` (CDP), `diagnostics.py`, `guard_runtime.py`, `caiji.py`, `privacy_policy.py`, and `audit_bundle.py` (offline bundle audit). `shouhu.py` is the Windows watchdog. Dictionaries are in `dicts/`, tests in `tests/`, assets in `docs/`. See `CLAUDE.md`.
 
 ## Build, Test, and Development Commands
 
@@ -15,12 +15,13 @@ Requires Python 3.10+ and Antigravity; tests need Python 3.11+. Use `python3` on
 - `python caiji.py`: export source counts only; `--include-ui-text` explicitly exports audited static labels; `--misses` exports numeric engine misses.
 - `python audit_bundle.py --bundle path/to/main.js --version 2.29.0 --output audit-report.json`: hash a local bundle and produce review candidates; never edits dictionaries.
 - `python -B -m unittest tests.test_browser_fixture -v`: run the synthetic browser fixture when Playwright/Chromium are installed; otherwise it skips.
+- `python -B -m unittest tests.test_performance_baseline -v`: compare synthetic initial scans, mutation batches, and idle attribute fallback; timings are informational, not real-app guarantees.
 
 ## Coding Style & Naming Conventions
 
-Use four-space Python indentation, `snake_case` functions/variables, and `UPPER_SNAKE_CASE` constants. Preserve existing JavaScript naming and formatting. No formatter or linter is configured. Keep `qidong.bat` ASCII-only.
+Use four-space Python indentation, `snake_case` functions/variables, and `UPPER_SNAKE_CASE` constants. Preserve existing JavaScript naming and formatting in `engine_template.js`. No formatter or linter is configured. Keep `qidong.bat` ASCII-only.
 
-Dictionaries use UTF-8, two-space indentation, and English-to-Chinese string mappings. Add complete UI strings, avoid duplicate normalized keys, and preserve product names and user content. Put dynamic text in `REGEX_RULES`. Keep Python `normalize_text()` and JavaScript `norm()` aligned; account for both escaping layers in embedded JavaScript.
+Dictionaries use UTF-8, two-space indentation, and English-to-Chinese string mappings. Add complete UI strings, avoid duplicate normalized keys, and preserve product names and user content. Put dynamic text in `REGEX_RULES`. Keep Python `normalize_text()` and JavaScript `norm()` aligned; edit the standalone `engine_template.js` directly rather than re-embedding it in Python.
 
 ## Testing Guidelines
 

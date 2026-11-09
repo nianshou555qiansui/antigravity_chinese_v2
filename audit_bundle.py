@@ -107,7 +107,7 @@ def _regex_can_start(previous):
     return previous in {
         "", "(", "[", "{", ":", ";", ",", "=", "!", "?", "&", "|", "+", "-", "*",
         "%", "~", "return", "throw", "case", "delete", "void", "typeof", "instanceof",
-        "in", "of", "yield", "await", "else", "do", ")control",
+        "in", "of", "yield", "await", "else", "do", ")control", "=>",
     }
 
 
@@ -159,6 +159,7 @@ def _skip_expression(source, index):
     depth = 1
     previous = "{"
     paren_context = []
+    bracket_depth = 0
     control_paren_keywords = {"if", "while", "for", "with", "switch", "catch"}
     while index < len(source) and depth:
         char = source[index]
@@ -184,16 +185,27 @@ def _skip_expression(source, index):
             if not closed:
                 raise AuditError("unterminated JavaScript regular expression")
             previous = "value"
-        elif char == "{":
+        elif char == "[":
+            bracket_depth += 1
+            previous = char
+            index += 1
+        elif char == "]":
+            bracket_depth = max(0, bracket_depth - 1)
+            previous = char
+            index += 1
+        elif char == "{" and bracket_depth == 0:
             depth += 1
             previous = char
             index += 1
-        elif char == "}":
+        elif char == "}" and bracket_depth == 0:
             depth -= 1
             previous = "value"
             index += 1
         else:
-            if char.isalpha() or char in "_$":
+            if char == "=" and index + 1 < len(source) and source[index + 1] == ">":
+                previous = "=>"
+                index += 2
+            elif char.isalpha() or char in "_$":
                 end = index + 1
                 while end < len(source) and (source[end].isalnum() or source[end] in "_$"):
                     end += 1
@@ -206,6 +218,14 @@ def _skip_expression(source, index):
             elif char == ")":
                 is_control = paren_context.pop() if paren_context else False
                 previous = ")control" if is_control else char
+                index += 1
+            elif char == "[":
+                bracket_depth += 1
+                previous = char
+                index += 1
+            elif char == "]":
+                bracket_depth = max(0, bracket_depth - 1)
+                previous = char
                 index += 1
             elif not char.isspace():
                 previous = char
@@ -339,7 +359,10 @@ def _scan_bundle(source):
                 raise AuditError("unterminated JavaScript regular expression")
             previous = "value"
         else:
-            if char.isalpha() or char in "_$":
+            if char == "=" and index + 1 < len(source) and source[index + 1] == ">":
+                previous = "=>"
+                index += 2
+            elif char.isalpha() or char in "_$":
                 end = index + 1
                 while end < len(source) and (source[end].isalnum() or source[end] in "_$"):
                     end += 1

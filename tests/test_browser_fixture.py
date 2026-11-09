@@ -65,6 +65,16 @@ class BrowserFixtureTests(unittest.TestCase):
         self._wait(page, "document.querySelector('#save-button').getAttribute('aria-label') === '保存'")
         self._wait(page, "document.querySelector('#shadow-host').shadowRoot.textContent.includes('影子标签')")
 
+        # Multiple mutations in one browser task are delivered as a single observer batch.
+        page.evaluate("""
+            const button = document.querySelector('#boundary-button');
+            button.classList.add('terminal');
+            button.firstChild.nodeValue = 'File';
+            button.setAttribute('title', 'File');
+        """)
+        self._wait(page, "document.querySelector('#boundary-button').textContent === 'File'")
+        self.assertEqual(page.locator("#boundary-button").get_attribute("title"), "File")
+
         self.assertEqual(page.locator("#safe-input").input_value(), "typed sample")
         self.assertEqual(page.locator("#safe-input").get_attribute("placeholder"), "文件")
         self.assertEqual(page.locator("#safe-input").get_attribute("title"), "Save")
@@ -79,6 +89,15 @@ class BrowserFixtureTests(unittest.TestCase):
         # characterData updates are observed after a React-like text replacement.
         page.evaluate("document.querySelector('#static-text').firstChild.nodeValue = 'Hello'")
         self._wait(page, "document.querySelector('#static-text').textContent === '你好'")
+
+        page.evaluate("""
+            const button = document.querySelector('#boundary-button');
+            button.classList.remove('terminal');
+            button.firstChild.nodeValue = 'Save';
+            button.setAttribute('title', 'Save');
+        """)
+        self._wait(page, "document.querySelector('#boundary-button').textContent === '保存'")
+        self._wait(page, "document.querySelector('#boundary-button').title === '保存'")
 
     def test_new_shadow_root_and_reload_can_be_reinjected(self):
         page = self.page

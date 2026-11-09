@@ -64,6 +64,9 @@ class PrivacyTests(unittest.TestCase):
     def test_boundary_changes_and_reparenting_recheck_admission(self):
         self.run_case("mutation")
 
+    def test_mutation_batches_route_attributes_and_recheck_boundaries(self):
+        self.run_case("routing")
+
     def test_collection_requires_static_marker_and_exact_value(self):
         self.run_case("collection")
 
