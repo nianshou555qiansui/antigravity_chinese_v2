@@ -11,6 +11,7 @@ from cdp_connection import CdpError, CdpPool
 
 
 ENGINE_SCOPE = "antigravity-main-v2"
+INITIAL_READY_TIMEOUT = 60
 MAIN_PAGE_STATE = r"""() => {
     try {
         if (window !== window.top) return {status: 'skipped', reason: 'subframe'};
@@ -150,17 +151,19 @@ async def translate_pages_async(pages, engine_js, force_ids=(), *, pool):
     return await asyncio.gather(*(limited(page) for page in pages))
 
 
-def inject_windows(port, engine_js, watch_seconds=30, ready_timeout=60, only_missing=False):
+def inject_windows(port, engine_js, watch_seconds=30, ready_timeout=INITIAL_READY_TIMEOUT, only_missing=False,
+                   wait_for_main=False):
     """Use one watch deadline for all targets; rediscover and revalidate every round."""
     async def run():
         async with CdpPool() as pool:
-            return await _inject_windows(port, engine_js, watch_seconds, ready_timeout, only_missing, pool=pool)
+            return await _inject_windows(port, engine_js, watch_seconds, ready_timeout, only_missing,
+                                         wait_for_main, pool=pool)
 
     return asyncio.run(run())
 
 
-async def _inject_windows(port, engine_js, watch_seconds=30, ready_timeout=60, only_missing=False,
-                          *, pool, clock=None, sleep=None):
+async def _inject_windows(port, engine_js, watch_seconds=30, ready_timeout=INITIAL_READY_TIMEOUT, only_missing=False,
+                          wait_for_main=False, *, pool, clock=None, sleep=None):
     clock = clock or time.monotonic
     sleep = sleep or asyncio.sleep
     report = WindowReport()
@@ -178,7 +181,9 @@ async def _inject_windows(port, engine_js, watch_seconds=30, ready_timeout=60, o
                 refreshed.add(result.target_id)
             if result.confirmed and result.status == "injected":
                 report.injections[result.target_id] = report.injections.get(result.target_id, 0) + 1
-        if report.results and all(result.status == "skipped" for result in report.results) and watch_deadline is None:
+        if (not wait_for_main and report.results
+                and all(result.status == "skipped" for result in report.results)
+                and watch_deadline is None):
             return report
         now = clock()
         if report.successful and watch_deadline is None:

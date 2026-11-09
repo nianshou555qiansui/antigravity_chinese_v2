@@ -293,12 +293,16 @@ def main():
 
     # 只翻译经逐窗口身份检查的主界面；观察期内持续发现新窗口。
     try:
-        port, _ = prepare_instance(args)
+        port, initial_page = prepare_instance(args)
         print(f"[连接] 已验证调试端口 {port}，正在识别所有主界面窗口...")
+        if initial_page is None:
+            print(f"[启动等待] 首次启动后继续发现并验证主窗口，最多 {cdp_targets.INITIAL_READY_TIMEOUT} 秒；未验证页面绝不注入。")
         if args.watch > 0:
             print(f"[观察] 首个窗口成功后继续观察 {args.watch} 秒，为新窗口和重载页面补注。")
         report = cdp_targets.inject_windows(
-            port, build_engine_js(dict_map), watch_seconds=args.watch)
+            port, build_engine_js(dict_map), watch_seconds=args.watch,
+            ready_timeout=cdp_targets.INITIAL_READY_TIMEOUT,
+            wait_for_main=initial_page is None)
     except cdp_discovery.DiscoveryError as exc:
         print(f"[错误] {exc}")
         sys.exit(1)
@@ -307,11 +311,26 @@ def main():
     for result in report.results:
         if result.status in ("error", "pending"):
             print(f"[窗口未完成] {result.reason}")
+        elif result.status == "skipped":
+            print(f"[窗口跳过] {_window_skip_reason(result.reason)}")
     if not report.ok:
         print("[错误] 没有已确认且注入成功的主窗口，或部分窗口未完成；未强行注入。")
         sys.exit(1)
     print("[成功] 所有当前已确认的主界面窗口均已注入；其他网页未处理。")
     print("[提示] 观察期结束后新开的窗口，请重跑启动器或使用安全守护。")
+
+
+def _window_skip_reason(reason):
+    labels = {
+        "subframe": "子框架不是独立主界面。",
+        "standalone-or-preview": "这是预览或独立页面，未注入。",
+        "not-hub-preload": "尚未确认 Hub 主界面原生桥。",
+        "not-antigravity-bootstrap": "尚未确认 Antigravity 页面配置。",
+        "navigation": "页面已导航，将在观察期内重新识别。",
+        "identity-unavailable": "页面身份暂不可用。",
+        "unknown-probe-reason": "页面身份不符合注入条件。",
+    }
+    return labels.get(reason, "页面身份不符合注入条件。")
 
 
 if __name__ == "__main__":

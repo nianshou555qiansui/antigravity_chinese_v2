@@ -173,7 +173,9 @@ class StartupTests(unittest.TestCase):
         ], {"main": 1})
         with patch.object(sys, "argv", ["hanhua_v2.py", "--watch", "7"]):
             hh.main()
-        self.inject.assert_called_once_with(7542, "fixture-engine", watch_seconds=7)
+        self.inject.assert_called_once_with(7542, "fixture-engine", watch_seconds=7,
+                                            ready_timeout=hh.cdp_targets.INITIAL_READY_TIMEOUT,
+                                            wait_for_main=False)
         self.launch.assert_not_called()
         self.stop.assert_not_called()
 
@@ -202,7 +204,9 @@ class StartupTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as result:
                 hh.main()
         self.assertEqual(result.exception.code, 1)
-        self.inject.assert_called_once_with(7542, "fixture-engine", watch_seconds=30)
+        self.inject.assert_called_once_with(7542, "fixture-engine", watch_seconds=30,
+                                            ready_timeout=hh.cdp_targets.INITIAL_READY_TIMEOUT,
+                                            wait_for_main=True)
         self.launch.assert_not_called()
         self.stop.assert_not_called()
 
@@ -303,6 +307,8 @@ class ConfirmationTests(unittest.TestCase):
         self.assertNotIn("killall", mac)
         self.assertIn('set "RESULT=%ERRORLEVEL%"', batch)
         self.assertIn("exit /b %RESULT%", batch)
+        self.assertIn("Press any key to close this window.", batch)
+        self.assertIn("pause >nul", batch)
         self.assertIn('exit "$result"', mac)
         self.assertNotIn("Translation engine injected", batch)
         self.assertNotIn("翻译引擎已在内存中", mac)

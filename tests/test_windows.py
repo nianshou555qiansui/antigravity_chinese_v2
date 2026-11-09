@@ -25,8 +25,8 @@ def page(target_id, url="https://127.0.0.1:7555/"):
     }
 
 
-def result(target_id, status, confirmed=True):
-    return targets.TargetResult(target_id, status, confirmed=confirmed)
+def result(target_id, status, confirmed=True, reason=""):
+    return targets.TargetResult(target_id, status, reason=reason, confirmed=confirmed)
 
 
 class Clock:
@@ -156,6 +156,52 @@ class WindowSchedulingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.injections, {})
         self.assertEqual(self.clock.now, 100)
         self.assertEqual(len(self.rounds), 1)
+
+    async def test_launched_hub_waits_through_transient_preload_skips(self):
+        main = page("main")
+        self.scenario([
+            ([main], [result("main", "skipped", False, "not-hub-preload")]),
+            ([main], [result("main", "skipped", False, "not-antigravity-bootstrap")]),
+            ([main], [result("main", "injected")]),
+        ])
+        report = await self.inject(watch_seconds=0, ready_timeout=3, wait_for_main=True)
+        self.assertTrue(report.ok)
+        self.assertEqual(report.injections, {"main": 1})
+        self.assertEqual(len(self.rounds), 3)
+        self.assertLessEqual(self.clock.now, 103)
+
+    async def test_launched_hub_waits_through_transient_preview_classification(self):
+        preview = page("main", "http://127.0.0.1:7542/static/loading.html")
+        main = page("main")
+        self.scenario([
+            ([preview], [result("main", "skipped", False, "standalone-or-preview")]),
+            ([main], [result("main", "injected")]),
+        ])
+        report = await self.inject(watch_seconds=0, ready_timeout=3, wait_for_main=True)
+        self.assertTrue(report.ok)
+        self.assertEqual(report.injections, {"main": 1})
+        self.assertEqual(len(self.rounds), 2)
+
+    async def test_launched_hub_waits_for_targets_to_appear(self):
+        main = page("main")
+        self.scenario([
+            ([], []),
+            ([main], [result("main", "injected")]),
+        ])
+        report = await self.inject(watch_seconds=0, ready_timeout=3, wait_for_main=True)
+        self.assertTrue(report.ok)
+        self.assertEqual(report.injections, {"main": 1})
+        self.assertEqual(len(self.rounds), 2)
+
+    async def test_launched_preview_stays_uninjected_until_startup_deadline(self):
+        self.scenario([([page("preview")], [
+            result("preview", "skipped", False, "standalone-or-preview")])])
+        report = await self.inject(watch_seconds=0, ready_timeout=2, wait_for_main=True)
+        self.assertFalse(report.ok)
+        self.assertEqual(report.skipped, 1)
+        self.assertEqual(report.injections, {})
+        self.assertEqual(self.clock.now, 102)
+        self.assertEqual(len(self.rounds), 3)
 
     async def test_no_target_single_round_is_not_success(self):
         self.scenario([([], [])])

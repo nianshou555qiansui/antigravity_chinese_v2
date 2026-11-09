@@ -24,6 +24,7 @@ exit /b 0
 
 :failed
 echo.
-echo [Error] Command failed or needs attention. Review the message above.
-pause
+echo [Error] Translation was not confirmed. Antigravity remains open; review the message above.
+echo Press any key to close this window.
+pause >nul
 exit /b %RESULT%
