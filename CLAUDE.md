@@ -9,9 +9,10 @@ Antigravity，连 Chrome DevTools 协议（CDP）把一段 MutationObserver 翻�
 **不修改任何安装文件**（不碰 `Antigravity.exe`、`app.asar`、`product.json`），因此没有还原逻辑，
 官方更新也不会破坏安装。
 
-依赖：Python 3.10+ + `websockets`（本机实测 Python 3.14.7 / websockets 16.0）。无构建；离线测试使用 Python 3.11+ 标准库 `unittest` + Node.js。
-当前适配 Antigravity **2.29.0**（2026-11）。官方版本号从调试端口 `/json/version` 的 User-Agent 读：
-`Antigravity/2.29.0`。本轮 Windows 实机注入通过；macOS 未实机验证。
+依赖：Python 3.10+ + `websockets`（本机实测 Python 3.14.6 / websockets 16.0）。无构建；离线测试使用 Python 3.11+ 标准库 `unittest` + Node.js。
+当前适配 Antigravity **2.32.1**（2026-11）。官方版本号从调试端口 `/json/version` 的 User-Agent 读：
+`Antigravity/2.32.1`，同时核对安装包 `package.json` 与窗口配置版本。本轮 Windows 实机注入通过；
+验证环境为 Python 3.14.7 / websockets 16.0 / Node.js 24.21.0；macOS 未实机验证。
 
 ### 为什么不能沿用 1.x 的做法
 
@@ -119,6 +120,8 @@ Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只�
 
 外部网页、加载壳、独立预览等不得因标题含 Antigravity 就获准翻译。真实指纹依据 2.29.0 Windows
 安装包和运行中主窗口核验；新版本改变特征时宁可拒绝并重新审计，不退回宽松匹配。
+2.32.1 已重新核验原生桥、配置和主 bundle 特征，现有身份检查可继续使用；新增路由与保护区
+仍须逐项审阅，不能因版本号格式相同就放宽检查。
 
 ### 注入失败的显式上报
 
@@ -228,6 +231,12 @@ data-quotable=true、附件、项目/会话/侧问题标题、section-header、L
 不要扩大成所有 `data-cascade-id` / `data-quotable-root`：它们含正常 composer 和工具栏。
 tooltip portal 混有用户文件名，不能只凭 role=tooltip 就当固定 UI；当前保守拒绝。
 
+2.32.1 补充 39 个精确内容标记，覆盖评论、上下文卡片、任务/协调智能体卡片、语音转写、
+侧问题正文、文件名、下载项、网页提示、SSH 主机及 CSV/PDF/Notebook 正文；完整清单在
+`privacy_policy.py`。原生文件查看器以 **class token** `file-viewer-root` 保护，不能按泛化的
+`file` 前缀排除设置项。带项目名且逐词动画的 `coordinator-welcome` 保守排除，不采集或改写其中的名称。
+Node 读取计数回归覆盖首次、变更、重注入、定时兜底和 Shadow DOM；Chromium 夹具覆盖对应内容与固定控件。
+
 会话/项目列表项的识别特征必须够精确：`DIV` + `relative` + `w-full` + `select-none` + `cursor-pointer`。
 只判 `select-none cursor-pointer` 会误伤菜单栏按钮（File/View/Window），导致它们不翻译。
 
@@ -254,13 +263,14 @@ title/aria-label 不自动视为固定元数据。按钮/明确控件语义及�
 ## 字典约定
 
 `dicts/*.json` 运行时全部合并成一个 map。`common.json` 放通用 UI 词（23 条），
-`ui_v2.json` 放 2.0 界面文案（约 2400 条，2026-10 按 bundle 审计法从 2.23.1 补齐），
-`ui_v2_225.json` 放 2.25.25 的增量（471 条），`ui_v2_229.json` 放 2.29.0 的增量（600 条）；总计 3495 条。**所有文件之间不得有重复 key**——
+`ui_v2.json` 放 2.0 界面文案（2401 条，2026-10 按 bundle 审计法从 2.23.1 补齐），
+`ui_v2_225.json` 放 2.25.25 的增量（471 条），`ui_v2_229.json` 放 2.29.0 的增量（600 条），
+`ui_v2_232.json` 放 2.32.1 的增量（531 条）；总计 4026 条。**所有文件之间不得有重复 key**——
 同一条翻译存在两处，改一处另一处就会漂移。`common.json` 是通用词的唯一归属地。
 按版本拆文件而不是并进 `ui_v2.json`，是为了让「哪批词条对应哪次官方更新」一眼可查。
 
 **重名不会报错，而是静默覆盖**：`load_dictionary()` 按 `sorted(os.listdir())` 顺序合并，
-后加载的文件覆盖先前的（`common.json` → `ui_v2.json` → `ui_v2_225.json` → `ui_v2_229.json`）。
+后加载的文件覆盖先前的（`common.json` → `ui_v2.json` → `ui_v2_225.json` → `ui_v2_229.json` → `ui_v2_232.json`）。
 加词条前先跑 `python -m unittest discover -s tests -v` 的重复检查，别指望加载器替你拦。
 
 新增翻译只需在 `dicts/` 下加 JSON，不用改代码。
@@ -324,6 +334,17 @@ title/aria-label 不自动视为固定元数据。按钮/明确控件语义及�
    本轮新增 600 条：属性文案 + 直接文本节点 + 实机未命中补漏；产品名、库内部标识、用户内容不收录。录音计数、侧边问题计数、搜索结果模板走 `REGEX_RULES`。
    `Search conversations with` 等片段经 bundle / DOM 确认是图标两侧的实际文本节点，不能把含 Markdown 图标的整句原始消息直接当 DOM 词条。
    引擎补齐既有 Shadow DOM 的遍历/观察与 host 禁区回溯、可编辑属性枚举保护，并让 JS 空白归一集合与 Python 一致。
+10. **2.32.1（2026-11）**：`main.js` 为 12,061,895 字节，SHA-256 为
+    `4c0a1ff5659e7dd92e6ad249a386c0dbce2c8e94b88522a2f366ff20b397081e`。
+    `app.asar` 的 `package.json`、CDP User-Agent 与主窗口配置均确认 2.32.1；从
+    `language_server.exe` 内嵌 ZIP 提取的 bundle 与运行中界面服务返回文件一致。
+    ZIP 不在 EXE 文件尾部，直接 `zipfile.ZipFile(exe)` 会失败；定位 ZIP 结束记录，核对中央目录
+    偏移/大小后只读截取归档，不能改写 EXE。审阅新增 531 条；45 条已由短词大小写匹配覆盖的候选
+    不重复加入，原有四份词典的哈希未变。配额缩写、下载进度、草稿数、MCP 失败数、帮助项与
+    侧问题混合计数、表格行数使用 11 条新增模板规则。审计报告中 531 条新增词条均精确命中。
+    新 bundle 的模板还包含未配对的 UTF-16 代理字符；保存 JSON 时仅将这些字符转义，不能输出
+    非法 UTF-8 或因编码失败丢掉整份报告。225 项回归通过，含 3 项 Chromium 夹具；Windows
+    单个主窗口重注入和只读诊断通过。完整记录见 `docs/compatibility_2321.md`。
 
 现在可用只读 `audit_bundle.py --bundle <本地 main.js> --version <已确认版本> --output audit-report.json`
 固化这套流程。它不联网、不连 CDP、不读取运行页面；报告包含 bundle/词典 SHA-256、字符串位置与
@@ -404,9 +425,12 @@ issue 就泄露了，`_mask_proxy()` 就是干这个的。
   同理别用 `timeout /t`（stdin 被重定向时直接报错退出），延时统一用 `ping -n N 127.0.0.1`。
 - **在 Git Bash 里测 Windows 命令要加 `MSYS_NO_PATHCONV=1`**，否则 `taskkill /f` 的 `/f`
   会被转成路径 `F:/` 而报「无效参数」。用户双击 .bat 时不受影响。
-- **本机开了 HTTP 代理（Clash 等）会让 CDP 连不上**：`urllib` 会把 `http://127.0.0.1:9333`
-  的请求打进代理。`main()` 开头的 `_bypass_proxy_for_local_cdp()` 已把本机地址并入
-  `NO_PROXY`，新增代码别在它之前对调试端口发请求。
+- **本机开了 HTTP 代理（Clash 等）会让 CDP 连不上**：注意**走代理的是 `websockets`，不是
+  `http.client`**。websockets 16 的 `proxy` 参数默认 `True`，会读 `HTTP_PROXY`/`no_proxy`；
+  `NO_PROXY` 不含本机时会把 `ws://127.0.0.1` 打进代理（实测 `ConnectionRefusedError`）。
+  `http.client`（`http_json` 用的）直连，所以症状是 **`/json` 探得到、注入却连不上**。
+  三个入口的 `main()` 都必须调 `_bypass_proxy_for_local_cdp()`——`hanhua_v2`、`caiji`、
+  `shouhu` 是独立进程，谁都不能指望别人替它设好 `NO_PROXY`。
 - **Windows 进程枚举必须容忍本地编码。** `cdp_discovery.py` 读取 `tasklist /FO CSV /NH` 的原始 bytes，
   用替换式解码解析 ASCII 可执行文件名/PID，忽略本地化列，避免 GBK 解码异常；命令失败或无有效表须报错，不能当成无进程。
   所有后台子进程带 `CREATE_NO_WINDOW`，不能为了复用端口引入闪黑窗。

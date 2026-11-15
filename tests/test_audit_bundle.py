@@ -123,6 +123,16 @@ const marker="Example @ mention & Terms of Service!";
         values = {item["text"] for item in report["new_candidates"]}
         self.assertIn("Example @ mention & Terms of Service!", values)
 
+    def test_report_roundtrips_javascript_lone_surrogates_as_valid_utf8(self):
+        self.bundle.write_text(r'const label=`New ${value} \uD800`; const tail=`End ${value} \uDC00`;', encoding="utf-8")
+        report = self.run_audit()
+        output = self.root / "report.json"
+        self.assertTrue(audit._write_report(report, output))
+        raw = output.read_bytes()
+        self.assertIn(b"\\ud800", raw)
+        self.assertIn(b"\\udc00", raw)
+        self.assertEqual(json.loads(raw.decode("utf-8")), report)
+
     def test_placeholder_review_supports_only_explicit_formats(self):
         report = self.run_audit()
         keys = {item["key"] for item in report["placeholder_reviews"]}

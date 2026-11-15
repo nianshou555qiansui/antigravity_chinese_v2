@@ -158,6 +158,24 @@
          (m, a, b) => '已删除 ' + a + ' 条录音（' + b + ' MB）'],
         [/^This deletes ([0-9]+) call recordings? [(]([0-9]+[.][0-9]+) MB[)] from your machine[.] You can't undo this[.]$/,
          (m, a, b) => '这将从你的设备删除 ' + a + ' 条通话录音（' + b + ' MB），此操作无法撤销。'],
+        // 2.32.1 的配额倒计时使用 d/h/m 缩写；只接受 bundle 中的数值格式。
+        [/^Resets in ([0-9]+d(?:[ ][0-9]+h)?|[0-9]+h(?:[ ][0-9]+m)?|[0-9]+m|<1m)$/,
+         (m, a) => '将在 ' + a.replace('<1m', '不到 1 分钟')
+             .replace(/([0-9]+)d/g, '$1 天').replace(/([0-9]+)h/g, '$1 小时')
+             .replace(/([0-9]+)m/g, '$1 分钟') + ' 后重置'],
+        [/^Downloads, (100|[0-9]{1,2})% complete$/, (m, a) => '下载，已完成 ' + a + '%'],
+        [/^Resume ([0-9]+) comment drafts?$/, (m, a) => '继续编辑 ' + a + ' 条评论草稿'],
+        [/^([0-9]+) Drafts?$/, (m, a) => a + ' 条草稿'],
+        [/^([0-9]+) MCP servers? failed to start$/, (m, a) => a + ' 个 MCP 服务器启动失败'],
+        // 帮助项与侧边问题共用同一个收起入口，混合计数不能被单项模板截断。
+        [/^([0-9]+) Help$/, (m, a) => a + ' 个帮助项'],
+        [/^([0-9]+) Help · ([0-9]+) Side Questions?$/,
+         (m, a, b) => a + ' 个帮助项 · ' + b + ' 个侧边问题'],
+        [/^View ([0-9]+) help(?: items)?$/, (m, a) => '查看 ' + a + ' 个帮助项'],
+        [/^View ([0-9]+) help(?: items)? and ([0-9]+) side questions?$/,
+         (m, a, b) => '查看 ' + a + ' 个帮助项和 ' + b + ' 个侧边问题'],
+        [/^([0-9]+) rows$/, (m, a) => a + ' 行'],
+        [/^([0-9]+) \/ ([0-9]+) rows$/, (m, a, b) => a + ' / ' + b + ' 行'],
     ];
     function applyRegexRules(text) {
         for (const [re, fn] of REGEX_RULES) {

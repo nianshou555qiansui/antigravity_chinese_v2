@@ -93,6 +93,54 @@ assert.equal(JSON.stringify(misses).includes('PRIVATE_ACCOUNT_CONTEXT'), false);
 assert.equal(Object.values(misses.sources).reduce((a, b) => a + b, 0), 0);
 """)
 
+    def test_2321_content_markers_precede_reads_through_mutation_and_reinjection(self):
+        self.run_node(r"""
+for (const marker of [
+    'comment-card-text', 'pill-comment-anchor-text', 'comment-thread-row',
+    'context-provider-hover-card-title', 'context-provider-hover-card-description',
+    'automation-name', 'automation-instructions-text', 'automation-instructions-markdown',
+    'automation-last-run-error', 'coordinator-worker-card', 'coordinator-card-latest-line',
+    'coordinator-welcome', 'transcript-line-text', 'live-user-turn', 'live-agent-turn',
+    'voice-transcript-card', 'voice-transcript-summary', 'side-question-question',
+    'side-question-answer', 'side-question-followup-user', 'file-title-name', 'custom-view-pane-title',
+    'webview-download-open', 'webview-download-filename', 'webview-prompt-message',
+    'webview-prompt-origin', 'url-security-host', 'browser-autocomplete-option', 'browser-url-display',
+    'ssh-host-label', 'ssh-config-file-name', 'ssh-connect-host-option', 'ssh-machine-switcher-wsl-distro',
+    'cloud-trigger-row', 'sidecar-row', 'running-row', 'csv-scroll-viewport', 'pdf-text-layer', 'notebook-viewer',
+]) {
+    const h = makeHarness();
+    const parent = h.document.body.appendChild(new h.ElementStub('div', {'data-testid': marker}));
+    const fixture = privateLeaf(h, parent);
+    const shadow = parent.attachShadow({mode: 'open'});
+    const shadowFixture = privateLeaf(h, shadow);
+    h.inject(payload.engine);
+    fixture.text.value = 'File';
+    fixture.leaf.setAttribute('title', 'File');
+    h.observers[0].callback([
+        {type: 'characterData', target: fixture.text},
+        {type: 'attributes', target: fixture.leaf, attributeName: 'title'},
+        {type: 'childList', target: parent, addedNodes: [fixture.leaf]},
+    ]);
+    h.inject(payload.engine);
+    h.tick(5000);
+    assert.deepEqual(fixture.reads, {text: 0, attribute: 0}, marker);
+    assert.deepEqual(shadowFixture.reads, {text: 0, attribute: 0}, marker + ' shadow');
+    assert.equal(fixture.text.value, 'File', marker);
+    assert.equal(fixture.leaf.attrs.get('title'), 'File', marker);
+    assert.equal(shadowFixture.text.value, 'Save', marker + ' shadow');
+    const p = h.inject(payload.policy);
+    assert.equal(p.collectionSource(fixture.text), null, marker);
+    assert.equal(Object.values(h.window.__ag_hanhua_engine__.misses.sources).reduce((a, b) => a + b, 0), 0);
+}
+const h = makeHarness();
+const editor = h.document.body.appendChild(new h.ElementStub('div', {class: 'file-viewer-root w-full'}));
+const fixture = privateLeaf(h, editor);
+h.inject(payload.engine);
+h.tick(5000);
+assert.deepEqual(fixture.reads, {text: 0, attribute: 0});
+assert.equal(fixture.text.value, 'Save');
+""")
+
     def test_detached_mutation_records_do_not_reclassify_private_nodes(self):
         self.run_node(r"""
 const h = makeHarness();

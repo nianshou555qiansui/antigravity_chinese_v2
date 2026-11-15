@@ -280,6 +280,28 @@ function run({ engine, dictionary, normSamples }) {
     }
     for (const query of ["", "File / Gemini+v2", "My-App_42", "Create a new project from one or more folders.", "My  App\u2019s query", "\u4e2d\u6587 Create a new project from one or more folders."])
         dynamicCases.push([`No apps found for "${query}".`, `\u672a\u627e\u5230\u4e0e\u201c${query}\u201d\u5339\u914d\u7684\u5e94\u7528\u3002`]);
+    for (const [raw, translated] of [
+        ["<1m", "不到 1 分钟"], ["7m", "7 分钟"], ["2h", "2 小时"],
+        ["2h 15m", "2 小时 15 分钟"], ["3d", "3 天"], ["3d 4h", "3 天 4 小时"],
+    ]) dynamicCases.push([`Resets in ${raw}`, `将在 ${translated} 后重置`]);
+    for (const percent of [0, 7, 99, 100])
+        dynamicCases.push([`Downloads, ${percent}% complete`, `下载，已完成 ${percent}%`]);
+    dynamicCases.push(["128 rows", "128 行"], ["12 / 128 rows", "12 / 128 行"]);
+    for (const count of [1, 2, 37]) {
+        const plural = count === 1 ? "" : "s";
+        dynamicCases.push(
+            [`Resume ${count} comment draft${plural}`, `继续编辑 ${count} 条评论草稿`],
+            [`${count} Draft${plural}`, `${count} 条草稿`],
+            [`${count} MCP server${plural} failed to start`, `${count} 个 MCP 服务器启动失败`],
+            [`${count} Help`, `${count} 个帮助项`],
+            [`View ${count} help${count === 1 ? "" : " items"}`, `查看 ${count} 个帮助项`],
+            [`${count} Help · 2 Side Questions`, `${count} 个帮助项 · 2 个侧边问题`],
+            [`View ${count} help${count === 1 ? "" : " items"} and 1 side question`,
+                `查看 ${count} 个帮助项和 1 个侧边问题`],
+        );
+    }
+    for (const raw of ["Resets in File", "Resets in 7ms", "Downloads, 101% complete", "View File help"])
+        dynamicCases.push([raw, raw]);
     for (const [raw, expected] of dynamicCases) {
         const el = new h.ElementStub("button", { title: raw });
         const text = el.appendChild(new h.TextStub(raw));
@@ -441,6 +463,7 @@ function runGuardTests({ guarded, forced, probe, diagnosis, dictionary }) {
     ];
     for (const pathname of ["/", "/c/example", "/history", "/sidecars", "/customizations/plugins", "/view/example"]) {
         const h = hubHarness();
+        h.window.__APP_CONFIG__.appVersion = "2.32.1";
         h.context.location.pathname = pathname;
         assert.equal(h.inject(probe).status, "missing", "small probe does not install an engine");
         assert.equal(h.observers.length, 0);

@@ -656,7 +656,10 @@ def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha2
 
 def _write_report(report, output):
     try:
-        encoded = (json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+        # JavaScript permits lone UTF-16 surrogates. Keep them as JSON escapes
+        # while preserving readable Chinese and valid UTF-8 in the report.
+        encoded = (json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n").encode(
+            "utf-8", "backslashreplace")
     except (TypeError, ValueError):
         return False
     if len(encoded) > MAX_REPORT_BYTES:

@@ -36,14 +36,31 @@ def build_policy_js():
         const classFragments = ['code-view', 'editor-container', 'monaco-editor', 'suggest-widget',
             'output-view', 'debug-console', 'artifact-container', 'code-block', 'diff-view',
             'input-area', 'chat-input'];
-        const classTokens = new Set(['terminal', 'xterm', 'preview', 'agy-user-bubble', 'compact-tooltip']);
+        const classTokens = new Set(['terminal', 'xterm', 'preview', 'agy-user-bubble', 'compact-tooltip',
+            'file-viewer-root']);
         const hardTestIds = new Set(['user-input-step', 'user-message-content', 'user-message-bubble', 'input-attachment',
             'user-message-document-chip', 'project-header', 'project-selector-item', 'project-selector-trigger',
             'conversation-group-header', 'section-header', 'breadcrumb-segment', 'side-question-origin',
             'side-question-tab-header-name',
             'side-question-tab-header-title', 'subagent-tab-header-title', 'subagent-node',
             'conversation-navigator-card', 'conversation-navigator-group-card-header',
-            'conversation-navigator-group', 'settings-nav-item-Account']);
+            'conversation-navigator-group', 'settings-nav-item-Account',
+            // 2.32.1 bundle 核验：这些位置渲染用户文本、转写、文件名或主机名。
+            // 标记只保护对应内容，下载工具栏、任务菜单等独立控件仍可翻译。
+            'comment-card-text', 'pill-comment-anchor-text', 'comment-thread-row',
+            'context-provider-hover-card-title', 'context-provider-hover-card-description',
+            'automation-name', 'automation-instructions-text', 'automation-instructions-markdown',
+            'automation-last-run-error', 'coordinator-worker-card', 'coordinator-card-latest-line',
+            'coordinator-welcome', 'transcript-line-text', 'live-user-turn', 'live-agent-turn',
+            'voice-transcript-card', 'voice-transcript-summary',
+            'side-question-question', 'side-question-answer', 'side-question-followup-user',
+            'file-title-name', 'custom-view-pane-title',
+            'webview-download-open', 'webview-download-filename',
+            'webview-prompt-message', 'webview-prompt-origin', 'url-security-host',
+            'browser-autocomplete-option', 'browser-url-display',
+            'ssh-host-label', 'ssh-config-file-name', 'ssh-connect-host-option',
+            'ssh-machine-switcher-wsl-distro', 'cloud-trigger-row', 'sidecar-row', 'running-row',
+            'csv-scroll-viewport', 'pdf-text-layer', 'notebook-viewer']);
         const controlRoles = new Set(['button', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
             'tab', 'checkbox', 'radio', 'switch', 'combobox', 'searchbox']);
         const read = (element, name) => element.getAttribute(name);

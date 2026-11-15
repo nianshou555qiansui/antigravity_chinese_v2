@@ -2,7 +2,7 @@
 
 给 [Antigravity](https://antigravity.google/) 2.0 的界面加中文。
 
-当前适配 **2.29.0**：新增 600 条界面文案，覆盖内置浏览器、语音、侧边面板、远程项目、插件登录和自动化任务；词典共 3495 条。已在 Windows 版 2.29.0 验证运行时注入，macOS 本轮未实机验证。
+当前适配 **2.32.1**：本轮新增 531 条界面文案，覆盖 SSH 主机切换、浏览器下载与证书、协调智能体、远程任务和 GitHub 权限设置；词典共 4026 条。已在 Windows 版 2.32.1 验证运行时注入，macOS 本轮未实机验证。详见 [2.32.1 适配记录](docs/compatibility_2321.md)。
 
 不改安装目录里的任何文件：以调试端口启动 Antigravity，通过 Chrome DevTools 协议把翻译脚本注入页面。想恢复英文，关掉再正常启动就行；官方更新也不会弄坏它。
 
@@ -76,7 +76,7 @@ python hanhua_v2.py --autostart off     # 关闭
 
 `cdp_connection.py` 在单个事件循环中管理逐窗口连接、请求超时和断线退避。健康窗口只发送小型探测表达式，不反复传整份词典；确认引擎缺失后，才发送再次校验身份的完整注入表达式。命令结束或守护退出时关闭连接，窗口/端口归属改变时淘汰旧会话。
 
-脚本监听 DOM 变化实时替换文案。文本与子树只在初始扫描或对应变更时处理；普通获准属性按属性定向更新，隐私边界属性变化才重扫子树。3 秒兜底仅重扫可翻译属性，不重复递归全页面文本。引擎和采集器共用 `privacy_policy.py`：在读取内容前排除已识别的代码、终端、编辑器、消息、附件和用户标题，保护跨 Shadow DOM 与 slot 继承。普通输入框只允许翻译提示属性，不读写输入值。性能测试是合成 DOM 的本地基线，不代表真实 Antigravity 页面耗时。约 0.6 MB 的内存增量是旧版较小词典的历史测量，当前版本待重新测量。
+脚本监听 DOM 变化实时替换文案。文本与子树只在初始扫描或对应变更时处理；普通获准属性按属性定向更新，隐私边界属性变化才重扫子树。3 秒兜底仅重扫可翻译属性，不重复递归全页面文本。引擎和采集器共用 `privacy_policy.py`：在读取内容前排除已识别的代码、终端、编辑器、消息、附件和用户标题，保护跨 Shadow DOM 与 slot 继承。2.32.1 补充保护原生文件查看器、CSV / PDF / Notebook 正文、评论、语音转写、任务名称、下载文件名和 SSH 主机名。普通输入框只允许翻译提示属性，不读写输入值。性能测试是合成 DOM 的本地基线，不代表真实 Antigravity 页面耗时。约 0.6 MB 的内存增量是旧版较小词典的历史测量，当前版本待重新测量。
 
 为什么不用老项目的办法：[cshitian/antigravity_chinese](https://github.com/cshitian/antigravity_chinese) 针对 1.x，往 `workbench.html` 写 `<script>` 并同步 `product.json` 校验值。2.0 把 `resources/app` 打包成了 `app.asar`，界面改由本地服务渲染，那个注入点不存在了，失败还是静默的（上游 Issue #4 提过，一直没人修）。
 
@@ -85,14 +85,14 @@ python hanhua_v2.py --autostart off     # 关闭
 漏翻的地方只需要改 JSON，不用碰代码。
 
 1. 先用 `python caiji.py` 查看来源统计；需要本地候选时显式运行 `python caiji.py --include-ui-text`，仅将已审核的静态 UI 标签写进 `pending.json`，不在控制台打印原文。未知文案请人工核对或按下文离线 bundle 审计，不再全页面抓取
-2. 翻译后按 `{"原文": "译文"}` 的格式加进 `dicts/`：`common.json` 放通用词，`ui_v2.json` 放 2.0 基础文案，`ui_v2_225.json` 和 `ui_v2_229.json` 分别放 2.25.25、2.29.0 的增量；同一个 key 别写进两个文件
+2. 翻译后按 `{"原文": "译文"}` 的格式加进 `dicts/`：`common.json` 放通用词，`ui_v2.json` 放 2.0 基础文案，`ui_v2_225.json`、`ui_v2_229.json` 和 `ui_v2_232.json` 分别放 2.25.25、2.29.0、2.32.1 的增量；同一个 key 别写进两个文件
 3. `python hanhua_v2.py --no-launch` 重新注入验证
 
 写字典有三条规矩：
 
 1. 只写完整的 UI 字符串。30 字符以上的词条会参与子串替换，写半截短语会把整句搅成中英混杂。
 2. 避免翻译用户内容和产品名。已识别的会话标题、路径、邮箱区域会保护；未知组件边界不保证完全识别。Antigravity、Gemini 这类产品名也不动。
-3. 带变量的句子（比如「当前模型：<模型名>」）走 `hanhua_v2.py` 的 `REGEX_RULES`，写死进字典的话官方一换内容就失效。
+3. 带变量的句子（比如「当前模型：<模型名>」）走 `engine_template.js` 的 `REGEX_RULES`，写死进字典的话官方一换内容就失效。2.32.1 新增配额倒计时、下载进度、草稿数、MCP 启动失败数、帮助项混合计数和表格行数模板。
 
 Agent 统一译作智能体。下拉菜单和悬停提示通常在展开或悬停时才进 DOM；采集器只读取下文的审核标签，不采集任意 tooltip。未知文案请从 bundle 静态审计或人工核实。官方大改界面后，保护区与词条也需重新核对。
 
@@ -111,25 +111,29 @@ python caiji.py --port 9334         # 多实例时明确选择调试端口；默
 
 `--misses` 只读取当前引擎的来源计数，不保存文本、选择器、标题、URL 或文本哈希。次数按内容变化观测，重扫不重复累加，同一文案在多个节点可能多次计数；重注入清零，不能据此判定哪些旧词条已废弃。旧版原文 Set 不会导出，请先运行 `python hanhua_v2.py --no-launch` 加载新版引擎。`--misses` 不能与 `--include-ui-text` 同用。
 
-为防误改用户属性，`data-title`、普通元素的标题/无障碍标签及未知 tooltip 不再无条件翻译；输入框仅许可安全上下文中的 `placeholder` / `aria-placeholder`。动态分组和用户消息外包装保守排除，内部固定 Pinned 标题、消息动作或 tooltip 可能因此保留英文。这是隐私优先的取舍。已识别区域会保护，但未来未知组件的普通正文仍可能精确命中字典；不保证任意版本都绝不误翻，遇到时请反馈组件位置而非私人原文。
+为防误改用户属性，`data-title`、普通元素的标题/无障碍标签及未知 tooltip 不再无条件翻译；输入框仅许可安全上下文中的 `placeholder` / `aria-placeholder`。动态分组和用户消息外包装保守排除，内部固定 Pinned 标题、消息动作或 tooltip 可能因此保留英文。包含项目名的协调智能体欢迎语及部分动态任务卡片也保守排除。这是隐私优先的取舍。已识别区域会保护，但未来未知组件的普通正文仍可能精确命中字典；不保证任意版本都绝不误翻，遇到时请反馈组件位置而非私人原文。
 
-`caiji.py` 仅统计当前页面中的许可位置，文本候选也受静态白名单限制。想审计整个界面（包括未打开的设置页），先从调试端口的 `/json` 取得主页面 URL，再从该 URL 的 origin 下载 `/main.js`（2.29.0 约 11 MB；界面服务端口与调试端口不同，可能使用自签名 HTTPS）。抽取 UI 字符串与 `dicts/` 做双向 diff，可发现新增或改写的原文；核对上下文并排除库文案及用户数据后再翻译。过滤规则与踩坑见 [CLAUDE.md](CLAUDE.md) 的「bundle 审计法」。
+`caiji.py` 仅统计当前页面中的许可位置，文本候选也受静态白名单限制。想审计整个界面（包括未打开的设置页），先从调试端口的 `/json` 取得主页面 URL，再从该 URL 的 origin 下载 `/main.js`（2.32.1 约 12 MB；界面服务端口与调试端口不同，可能使用自签名 HTTPS）。也可从已确认版本的安装包中只读提取界面 bundle。抽取 UI 字符串与 `dicts/` 做双向 diff，可发现新增或改写的原文；核对上下文并排除库文案及用户数据后再翻译。过滤规则与踩坑见 [CLAUDE.md](CLAUDE.md) 的「bundle 审计法」。
 
 现在也可以对已下载的本地 bundle 使用只读审计器：
 
 ```bash
-python audit_bundle.py --bundle path/to/main.js --version 2.29.0 --output audit-report.json
+python audit_bundle.py --bundle path/to/main.js --version 2.32.1 --output audit-report.json
 ```
 
-`audit_bundle.py` 不联网、不连接 CDP、不读取运行中的页面，也不修改字典。报告记录 bundle 与各字典 SHA-256，保留字符串位置和属性/直接文本证据，给出精确命中、`new-candidate`、`possible-rewrite`、`not-found-in-bundle`、动态模板、术语及占位符复核项。相似度默认至少 0.85 且只供人工审核；`not-found` 不等于废弃，工具不会自动添加、删除或发布词条。`--expect-sha256` 可在审计前锁定已确认的 bundle；报告中的 `audit-report.json` 是本机产物，不要提交。
+`audit_bundle.py` 不联网、不连接 CDP、不读取运行中的页面，也不修改字典。报告记录 bundle 与各字典 SHA-256，保留字符串位置和属性/直接文本证据，给出精确命中、`new-candidate`、`possible-rewrite`、`not-found-in-bundle`、动态模板、术语及占位符复核项。相似度默认至少 0.85 且只供人工审核；`not-found` 不等于废弃，工具不会自动添加、删除或发布词条。报告支持 JavaScript 中未配对的 UTF-16 代理字符，保存时将其转为 JSON 转义，输出仍是有效 UTF-8。`--expect-sha256` 可在审计前锁定已确认的 bundle；报告中的 `audit-report.json` 是本机产物，不要提交。
 
 离线回归检查：`python -m unittest discover -s tests -v`（需本机有 Node.js，不会启动或修改 Antigravity）。改完词典或引擎都运行一次。GitHub Actions 的 `Offline regression` 工作流会在 Python 3.11、3.12、3.13 上重复运行测试、语法检查和启动器编码检查，并在独立作业中安装 Chromium 运行无用户数据的浏览器夹具。
 
 ### 验证范围
 
-离线测试覆盖引擎身份检查、隐私边界、多窗口调度、采集器、bundle 审计、守护连接、重注入稳定性，以及合成 DOM 的初始扫描/变更批次/空闲属性兜底。浏览器夹具使用无账号和用户内容的本地页面。以下场景仍需在用户确认可用的真实环境中验收，离线测试不替代它们：
+离线测试覆盖引擎身份检查、隐私边界、多窗口调度、采集器、bundle 审计、守护连接、重注入稳定性，以及合成 DOM 的初始扫描/变更批次/空闲属性兜底。浏览器夹具使用无账号和用户内容的本地页面。
+
+2026-11-15 Windows Antigravity 2.32.1：225 项回归全部通过，包含 3 项 Chromium 浏览器夹具；Python 编译和 JavaScript 语法检查通过。安全复用已有实例，`--no-launch --watch 0` 向一个已确认主窗口注入 4026 条词典，随后 `--doctor` 通过。安装包提取与运行中界面服务返回的 `main.js` SHA-256 均为 `4c0a1ff5659e7dd92e6ad249a386c0dbce2c8e94b88522a2f366ff20b397081e`。默认采集和漏翻计数以内存执行，未导出界面原文。四份原有词典的 SHA-256 保持不变，新增词条均在新版 bundle 中精确命中。
 
 2026-11-09 Windows Antigravity 2.29.0：安全复用端口 9333，`--no-launch --watch 0` 向一个已确认主窗口补注，随后 `--doctor` 通过。默认采集和漏翻来源计数均以内存执行，未导出候选文本，字典 SHA-256 前后相同。离线 bundle 审计的 `main.js` SHA-256 为 `8d1196a22cd3eb9779e8faf5c31eb732d3df8d9d037b685733ed4e3d6cdfb5a2`，匹配已记录的 2.29.0 bundle；审计未改字典。报告有 3,995 个新候选及 38 个可能改写，未逐条人工复核或自动收录。
+
+以下场景仍需在真实环境中验收，离线测试和单窗口验证不替代它们：
 
 - 多个主窗口、新开/重载窗口均能补注；外部网页、预览页和独立设置页不注入。
 - 实际消息、附件、标题、输入、代码及未知 tooltip 在目标版本中保持原样，固定 UI 控件仍正常翻译。
@@ -161,7 +165,8 @@ shouhu.py            可选守护进程（仅 Windows）：登录自启，自动
 qidong.bat           Windows 一键启动器
 qidong_mac.sh        macOS 一键启动器
 qidong_mac.command   macOS 双击入口（调 qidong_mac.sh）
-dicts/               字典（common.json + ui_v2*.json，约 3500 条）
+dicts/               字典（common.json + ui_v2*.json，共 4026 条）
+docs/compatibility_2321.md  2.32.1 的 bundle 指纹、词条审阅与验证范围
 tests/               离线词典、完整引擎、目标识别及多窗口回归测试
 tests/browser_fixture.html  无用户数据的异步/Shadow DOM/输入保护夹具
 audit_bundle.py      本地 bundle 版本审计器（只读，不连接 CDP）
