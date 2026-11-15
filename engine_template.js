@@ -113,9 +113,11 @@
         [/^Select model, current: (.+)$/, (m, a) => '选择模型，当前：' + a],
         // 排队消息的快捷键 tooltip：前缀是平台相关的按键名（Enter / Alt+Enter / Mac 的 ⌥⌅），
         // 且随"立即发送/排队"设置互换后缀，必须按模板匹配而非写死。
-        // 第三行 "On empty prompt..." 不需要规则——字典里已有完整句子，smartReplace 覆盖
+        // 第三行也按完整模板匹配，保留 Windows / macOS 的按键前缀。
         [/^(.+?) Sends immediately$/, (m, a) => a + ' 立即发送'],
         [/^(.+?) Queues after the turn$/, (m, a) => a + ' 排队等待当前轮次结束后发送'],
+        [/^(Enter|Alt[+]Enter|\u23ce|\u2325\u23ce) On empty prompt, sends next in queue$/,
+         (m, a) => a + ' 输入为空时，发送队列中的下一条'],
         // 归档/进行中对话的计数标签（"1 archived conversation" / "2 active conversations"）：
         // 数量可变、单复数由官方模板决定，写死进字典必然漏。复合句（"N active and M archived"）
         // 单独一条兜住——单数规则带 $ 锚定，不会误吃复合句。
@@ -176,6 +178,10 @@
          (m, a, b) => '查看 ' + a + ' 个帮助项和 ' + b + ' 个侧边问题'],
         [/^([0-9]+) rows$/, (m, a) => a + ' 行'],
         [/^([0-9]+) \/ ([0-9]+) rows$/, (m, a, b) => a + ' / ' + b + ' 行'],
+        // f8a joins sandbox-dependent preset labels; host flags can hide one or both presets.
+        [/^(Default and Auto need|Default needs|Auto needs) the terminal sandbox, which isn't available on this host[.]$/,
+         (m, a) => (a.startsWith('Default and Auto') ? '“默认”和“自动”' : a.startsWith('Default') ? '“默认”' : '“自动”')
+             + '模式需要终端沙箱，但当前主机无法使用该功能。'],
     ];
     function applyRegexRules(text) {
         for (const [re, fn] of REGEX_RULES) {
@@ -242,9 +248,14 @@
 
             } else if (node.nodeType === Node.TEXT_NODE) {
                 // Privacy decisions precede reads, matching, and WeakMap caching.
-                if (!privacy.allowsText(node)) { lastSeen.delete(node); return; }
+                const scope = privacy.textScope(node);
+                if (!scope) { lastSeen.delete(node); return; }
                 let originalVal = node.nodeValue;
                 if (!originalVal || originalVal.trim().length < 1) return;
+                if (scope !== 'interface' && !privacy.acceptsTooltip(scope, norm(originalVal))) {
+                    lastSeen.delete(node);
+                    return;
+                }
                 // 值没变过就跳过（这是性能关键：避免每轮全量重扫都做昂贵匹配）
                 if (lastSeen.get(node) === originalVal) return;
                 // 纯中文/无英文字母的文本无需处理
@@ -289,6 +300,7 @@
         if (!ensureTrusted()) return;
         const subtreeRoots = new Set();
         const changedAttributes = new Map();
+        const tooltipContainers = new Set();
         const boundaryAttributes = new Set(privacy.boundaryAttributes);
         const translatableAttributes = new Set(TRANSLATABLE_ATTRS);
         for (const m of mutations) {
@@ -300,12 +312,19 @@
                 if (boundaryAttributes.has(m.attributeName)) {
                     subtreeRoots.add(m.target);
                     changedAttributes.delete(m.target);
+                    const root = m.target.getRootNode();
+                    tooltipContainers.add(root.nodeType === Node.DOCUMENT_NODE ? document.body : root);
                 } else if (translatableAttributes.has(m.attributeName) && !subtreeRoots.has(m.target)) {
                     let names = changedAttributes.get(m.target);
                     if (!names) { names = new Set(); changedAttributes.set(m.target, names); }
                     names.add(m.attributeName);
                 }
             }
+        }
+        // The portal can mount before its trigger receives aria-describedby; revisit only open tooltips.
+        for (const container of tooltipContainers) {
+            if (!container || typeof container.querySelectorAll !== 'function') continue;
+            for (const tooltip of container.querySelectorAll('[role="tooltip"]')) subtreeRoots.add(tooltip);
         }
         for (const root of subtreeRoots) translateNode(root);
         for (const [element, names] of changedAttributes) {

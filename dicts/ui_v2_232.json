@@ -529,5 +529,10 @@
   "Token rejected": "令牌被拒绝",
   "Waiting for the SSH connection to finish": "正在等待 SSH 连接完成",
   "Relaunches the app": "重新启动应用",
-  "Switch To": "切换到"
+  "Switch To": "切换到",
+  "Knowledge Work": "知识工作",
+  "Simplified interface for research, writing, and everyday tasks.": "适用于研究、写作和日常任务的简洁界面。",
+  "Software Engineering": "软件工程",
+  "Full interface for coding, developer tools, and managing agents.": "包含编程、开发工具和智能体管理功能的完整界面。",
+  "Change": "更换"
 }

@@ -229,9 +229,11 @@ Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只�
 2.29.0 已核验的精确保护标记包含 conversation-row-*、user-input-step、user-message-content/bubble、
 data-quotable=true、附件、项目/会话/侧问题标题、section-header、Lexical 根及账号入口。
 不要扩大成所有 `data-cascade-id` / `data-quotable-root`：它们含正常 composer 和工具栏。
-tooltip portal 混有用户文件名，不能只凭 role=tooltip 就当固定 UI；当前保守拒绝。
+tooltip portal 混有用户文件名，不能只凭 role=tooltip 就当固定 UI。仅核验过的权限“默认”标签与
+排队消息快捷键提示按来源结构、唯一 `aria-describedby` 关联和固定文案放行；其他 tooltip 保守拒绝，
+属性和采集仍拒绝。关联属性后挂载时只补扫打开的 tooltip；不要恢复周期性整页文本递归。
 
-2.32.1 补充 39 个精确内容标记，覆盖评论、上下文卡片、任务/协调智能体卡片、语音转写、
+2.32.1 补充 41 个精确内容标记，覆盖评论、上下文卡片、任务/协调智能体卡片、语音转写和音色名称、
 侧问题正文、文件名、下载项、网页提示、SSH 主机及 CSV/PDF/Notebook 正文；完整清单在
 `privacy_policy.py`。原生文件查看器以 **class token** `file-viewer-root` 保护，不能按泛化的
 `file` 前缀排除设置项。带项目名且逐词动画的 `coordinator-welcome` 保守排除，不采集或改写其中的名称。
@@ -265,7 +267,7 @@ title/aria-label 不自动视为固定元数据。按钮/明确控件语义及�
 `dicts/*.json` 运行时全部合并成一个 map。`common.json` 放通用 UI 词（23 条），
 `ui_v2.json` 放 2.0 界面文案（2401 条，2026-10 按 bundle 审计法从 2.23.1 补齐），
 `ui_v2_225.json` 放 2.25.25 的增量（471 条），`ui_v2_229.json` 放 2.29.0 的增量（600 条），
-`ui_v2_232.json` 放 2.32.1 的增量（531 条）；总计 4026 条。**所有文件之间不得有重复 key**——
+`ui_v2_232.json` 放 2.32.1 的增量（536 条）；总计 4031 条。**所有文件之间不得有重复 key**——
 同一条翻译存在两处，改一处另一处就会漂移。`common.json` 是通用词的唯一归属地。
 按版本拆文件而不是并进 `ui_v2.json`，是为了让「哪批词条对应哪次官方更新」一眼可查。
 
@@ -344,7 +346,10 @@ title/aria-label 不自动视为固定元数据。按钮/明确控件语义及�
     侧问题混合计数、表格行数使用 11 条新增模板规则。审计报告中 531 条新增词条均精确命中。
     新 bundle 的模板还包含未配对的 UTF-16 代理字符；保存 JSON 时仅将这些字符转义，不能输出
     非法 UTF-8 或因编码失败丢掉整份报告。225 项回归通过，含 3 项 Chromium 夹具；Windows
-    单个主窗口重注入和只读诊断通过。完整记录见 `docs/compatibility_2321.md`。
+    单个主窗口重注入和只读诊断通过。随后设置补漏新增 5 条：Change 来自 bundle，Knowledge Work /
+    Software Engineering 及各自说明来自官方 `project-4k-mode-copy` 配置，已在固定设置控件中核对。
+    同时补沙箱预设模板和两类提示框的精确来源许可，保护音色名称；最终 234 项回归通过，
+    含 4 项 Chromium 夹具，Windows 重注入 4031 条并通过诊断。完整记录见 `docs/compatibility_2321.md`。
 
 现在可用只读 `audit_bundle.py --bundle <本地 main.js> --version <已确认版本> --output audit-report.json`
 固化这套流程。它不联网、不连 CDP、不读取运行页面；报告包含 bundle/词典 SHA-256、字符串位置与

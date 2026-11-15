@@ -117,6 +117,68 @@ class BrowserFixtureTests(unittest.TestCase):
         self._wait(page, "document.querySelector('#static-text').textContent === '你好'")
         self._wait(page, "document.querySelector('#shadow-host').shadowRoot.textContent.includes('影子标签')")
 
+    def test_audited_settings_tooltips_and_reused_portal_privacy(self):
+        page = self.page
+        page.evaluate("""() => {
+            const root = document.querySelector('#fixture-root');
+            root.insertAdjacentHTML('beforeend', `
+                <div class="agy-card"><div class="w-full"><div class="px-3 pb-2 -mt-1 w-full">
+                    <span class="flex items-center gap-1 text-sm text-muted-foreground">
+                        <span>Keyboard shortcuts</span>
+                        <span id="keyboard-anchor" data-tooltip-id=":r2t7:-2"
+                            class="cursor-pointer inline-flex items-center hover:text-foreground"></span>
+                    </span>
+                </div></div></div>
+                <div data-testid="permissions-menu" role="menu">
+                    <div data-testid="permissions-preset-option-turbo" role="menuitem">
+                        <span data-testid="permissions-default-tag">
+                            <div id="default-anchor" data-tooltip-id="fixture-default" aria-describedby="default-tip"
+                                class="bg-secondary opacity-70 flex items-center gap-1 rounded-full px-1.5 text-sm"></div>
+                        </span>
+                    </div>
+                </div>
+                <div id="keyboard-tip" role="tooltip" class="compact-tooltip">
+                    <span id="shortcut-one">Enter Queues after the turn</span>
+                    <span id="shortcut-two">Alt+Enter Sends immediately</span>
+                    <span id="shortcut-three">Alt+Enter On empty prompt, sends next in queue</span>
+                </div>
+                <div id="default-tip" role="tooltip" class="compact-tooltip">Your This Computer setting</div>
+                <button id="file-anchor" data-tooltip-id="fixture-file" aria-describedby="file-tip"></button>
+                <div id="file-tip" role="tooltip" class="compact-tooltip">File</div>
+            `);
+            window.fixturePrivateTipReads = 0;
+            const text = document.querySelector('#file-tip').firstChild;
+            const descriptor = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeValue');
+            Object.defineProperty(text, 'nodeValue', {
+                get() { window.fixturePrivateTipReads++; return descriptor.get.call(this); },
+                set(value) { descriptor.set.call(this, value); },
+            });
+        }""")
+        page.evaluate(hanhua_v2.build_engine_js(hanhua_v2.load_dictionary()))
+        self._wait(page, "document.querySelector('#default-tip').textContent === '你的此计算机设置'")
+        self.assertEqual(page.locator('#shortcut-one').text_content(), 'Enter Queues after the turn')
+        page.evaluate("document.querySelector('#keyboard-anchor').setAttribute('aria-describedby', 'keyboard-tip')")
+        self._wait(page, "document.querySelector('#shortcut-one').textContent === 'Enter 排队等待当前轮次结束后发送'")
+        self.assertEqual(page.locator('#shortcut-two').text_content(), 'Alt+Enter 立即发送')
+        self.assertEqual(page.locator('#shortcut-three').text_content(), 'Alt+Enter 输入为空时，发送队列中的下一条')
+
+        page.evaluate("document.querySelector('#default-tip').firstChild.nodeValue = 'Your Remote setting'")
+        self._wait(page, "document.querySelector('#default-tip').textContent === '你的远程设置'")
+        page.evaluate("document.querySelector('#default-tip').firstChild.nodeValue = 'Create a new project from one or more folders. setting'")
+        self.assertEqual(page.locator('#default-tip').text_content(), 'Create a new project from one or more folders. setting')
+        self.assertEqual(page.evaluate('window.fixturePrivateTipReads'), 0)
+        self.assertEqual(page.locator('#file-tip').text_content(), 'File')
+
+        page.evaluate("""() => {
+            document.querySelector('#keyboard-anchor').removeAttribute('aria-describedby');
+            document.querySelector('#file-anchor').setAttribute('aria-describedby', 'keyboard-tip');
+            document.querySelector('#shortcut-one').firstChild.nodeValue = 'File';
+        }""")
+        self.assertEqual(page.locator('#shortcut-one').text_content(), 'File')
+        page.evaluate(hanhua_v2.build_engine_js(hanhua_v2.load_dictionary()))
+        self.assertEqual(page.locator('#shortcut-one').text_content(), 'File')
+        self.assertEqual(page.evaluate('window.fixturePrivateTipReads'), 0)
+
     def test_2321_dynamic_controls_and_user_content_boundaries(self):
         page = self.page
         cases = [

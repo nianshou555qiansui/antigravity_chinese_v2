@@ -96,6 +96,10 @@ function makeHarness(hasBody = true) {
             super(11);
             this.host = host;
         }
+
+        querySelectorAll(selector) {
+            return ElementStub.prototype.querySelectorAll.call(this, selector);
+        }
     }
 
     class ElementStub extends NodeStub {
@@ -132,12 +136,13 @@ function makeHarness(hasBody = true) {
         }
 
         querySelectorAll(selector) {
-            const names = selector.split(",").map(item => item.slice(1, -1));
+            const selectors = selector.split(",").map(item => item.match(/^\[([^\]=]+)(?:="([^"]*)")?\]$/));
             const matches = [];
             const visit = node => {
                 for (const child of node.childNodes) {
                     if (child.nodeType === 1) {
-                        if (names.some(name => child.hasAttribute(name))) matches.push(child);
+                        if (selectors.some(match => match && child.hasAttribute(match[1])
+                            && (match[2] === undefined || child.getAttribute(match[1]) === match[2]))) matches.push(child);
                         visit(child);
                     }
                 }

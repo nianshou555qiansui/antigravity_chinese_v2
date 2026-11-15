@@ -27,6 +27,7 @@ def build_policy_js():
         const sources = SOURCES;
         const attributes = sources.filter(name => name !== 'text');
         const boundaryAttributes = ['class', 'role', 'contenteditable', 'hidden', 'aria-hidden', 'inert',
+            'id', 'aria-describedby', 'data-tooltip-id',
             'data-testid', 'data-quotable', 'data-quotable-inline', 'data-lexical-editor',
             'data-project-name', 'data-project-label', 'data-title'];
         const staticLabels = STATIC_LABELS;
@@ -52,7 +53,7 @@ def build_policy_js():
             'automation-name', 'automation-instructions-text', 'automation-instructions-markdown',
             'automation-last-run-error', 'coordinator-worker-card', 'coordinator-card-latest-line',
             'coordinator-welcome', 'transcript-line-text', 'live-user-turn', 'live-agent-turn',
-            'voice-transcript-card', 'voice-transcript-summary',
+            'voice-transcript-card', 'voice-transcript-summary', 'voice-settings-name', 'voice-picker-name',
             'side-question-question', 'side-question-answer', 'side-question-followup-user',
             'file-title-name', 'custom-view-pane-title',
             'webview-download-open', 'webview-download-filename',
@@ -67,7 +68,7 @@ def build_policy_js():
         const has = (element, name) => typeof element.hasAttribute === 'function'
             ? element.hasAttribute(name) : read(element, name) !== null;
         const tagOf = element => String(element.tagName || '').toUpperCase();
-        function hard(element) {
+        function hard(element, tooltipText = false) {
             if (hardTags.has(tagOf(element))) return true;
             const editable = read(element, 'contenteditable');
             if (editable !== null && ['', 'true', 'plaintext-only'].includes(editable.toLowerCase())) return true;
@@ -75,11 +76,12 @@ def build_policy_js():
                 || read(element, 'data-quotable-inline') === 'true') return true;
             if (has(element, 'data-project-name') || has(element, 'data-project-label')) return true;
             const role = (read(element, 'role') || '').toLowerCase();
-            if (['code', 'img', 'tooltip'].includes(role)) return true;
+            if (['code', 'img'].includes(role) || (role === 'tooltip' && !tooltipText)) return true;
             const testId = read(element, 'data-testid') || '';
             if (hardTestIds.has(testId) || testId.startsWith('conversation-row-')) return true;
             const tokens = (read(element, 'class') || '').split(/[\t\n\f\r ]+/);
-            if (tokens.some(token => classTokens.has(token)
+            if (tokens.some(token => (classTokens.has(token)
+                    && !(tooltipText && role === 'tooltip' && token === 'compact-tooltip'))
                 || classFragments.some(fragment => token.includes(fragment)))) return true;
             return tagOf(element) === 'DIV'
                 && ['relative', 'w-full', 'select-none', 'cursor-pointer'].every(token => tokens.includes(token));
@@ -105,16 +107,72 @@ def build_policy_js():
             }
             return elements;
         }
-        function chain(node) {
+        function chain(node, tooltipText = false) {
             try {
                 if (!node || node.isConnected === false) return null;
                 const elements = ancestors(node);
-                return elements && !elements.some(hard) ? elements : null;
+                return elements && !elements.some(element => hard(element, tooltipText)) ? elements : null;
+            } catch (_) { return null; }
+        }
+        function hasTokens(element, tag, tokens) {
+            if (!element || tagOf(element) !== tag) return false;
+            const actual = (read(element, 'class') || '').split(/[\t\n\f\r ]+/);
+            return tokens.every(token => actual.includes(token));
+        }
+        function tooltipScope(tooltip) {
+            // CompactTooltipBaseUi (2.32.1) links its portal to the active trigger via aria-describedby.
+            // Inspect only metadata; filenames and arbitrary tooltip bodies never establish trust.
+            if (!hasTokens(tooltip, 'DIV', ['compact-tooltip'])) return null;
+            const id = read(tooltip, 'id');
+            const root = tooltip.getRootNode();
+            const container = root.nodeType === 9 ? root.body : root;
+            if (!id || !container || typeof container.querySelectorAll !== 'function') return null;
+            const anchors = Array.from(container.querySelectorAll('[aria-describedby]')).filter(element =>
+                read(element, 'data-tooltip-id')
+                && (read(element, 'aria-describedby') || '').split(/[\t\n\f\r ]+/).includes(id));
+            if (anchors.length !== 1) return null;
+            const anchor = anchors[0], elements = chain(anchor);
+            if (!elements || elements.some(element => softTags.has(tagOf(element)))) return null;
+            const parent = anchor.parentElement;
+            const presets = ['request_review', 'default', 'auto', 'turbo'];
+            if (hasTokens(anchor, 'DIV', ['bg-secondary', 'opacity-70', 'flex', 'items-center',
+                    'gap-1', 'rounded-full', 'px-1.5', 'text-sm'])
+                && read(parent, 'data-testid') === 'permissions-default-tag'
+                && elements.some(element => read(element, 'data-testid') === 'permissions-menu')
+                && elements.some(element => presets.some(preset =>
+                    read(element, 'data-testid') === 'permissions-preset-option-' + preset))) {
+                return 'permissions-default';
+            }
+            // SIb: the queued-message shortcut icon lives in this exact MR extra-content structure.
+            if (/^:r[0-9a-z]+:-[0-9]+$/i.test(read(anchor, 'data-tooltip-id') || '')
+                && hasTokens(anchor, 'SPAN', ['cursor-pointer', 'inline-flex', 'items-center', 'hover:text-foreground'])
+                && hasTokens(parent, 'SPAN', ['flex', 'items-center', 'gap-1', 'text-sm', 'text-muted-foreground'])
+                && hasTokens(parent.parentElement, 'DIV', ['px-3', 'pb-2', '-mt-1', 'w-full'])
+                && hasTokens(parent.parentElement.parentElement, 'DIV', ['w-full'])
+                && hasTokens(parent.parentElement.parentElement.parentElement, 'DIV', ['agy-card'])) {
+                return 'queued-shortcuts';
+            }
+            return null;
+        }
+        function textScope(node) {
+            try {
+                const elements = chain(node, true);
+                if (!elements || elements.some(element => softTags.has(tagOf(element)))) return null;
+                const tooltips = elements.filter(element => (read(element, 'role') || '').toLowerCase() === 'tooltip');
+                if (!tooltips.length) return 'interface';
+                return tooltips.length === 1 ? tooltipScope(tooltips[0]) : null;
             } catch (_) { return null; }
         }
         function allowsText(node) {
-            const elements = chain(node);
-            return !!elements && !elements.some(element => softTags.has(tagOf(element)));
+            return textScope(node) !== null;
+        }
+        function acceptsTooltip(scope, raw) {
+            // Even an audited default tag can mention a project name: only these fixed bodies translate.
+            if (scope === 'permissions-default') {
+                return ['Your This Computer setting', 'Your Remote setting'].includes(raw);
+            }
+            return scope === 'queued-shortcuts'
+                && /^(?:Enter|Alt[+]Enter|\u23ce|\u2325\u23ce) (?:Sends immediately|Queues after the turn|On empty prompt, sends next in queue)$/.test(raw);
         }
         function allowsAttribute(element, name) {
             if (!attributes.includes(name) || !element || element.nodeType !== 1) return false;
@@ -166,6 +224,6 @@ def build_policy_js():
             const owner = staticOwner(node);
             return staticLabels[owner].includes(raw.replace(/\s+/g, ' ').trim());
         }
-        return {sources, attributes, boundaryAttributes, allowsText, allowsAttribute,
+        return {sources, attributes, boundaryAttributes, allowsText, textScope, acceptsTooltip, allowsAttribute,
             collectionSource, acceptsStatic, usableText};
     })()""".replace("SOURCES", json.dumps(SOURCES)).replace("STATIC_LABELS", json.dumps(STATIC_LABELS))
