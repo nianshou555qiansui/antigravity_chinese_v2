@@ -2,7 +2,7 @@
 
 给 [Antigravity](https://antigravity.google/) 2.0 的界面加中文。
 
-当前适配 **2.32.1**：本轮新增 536 条界面文案，覆盖 SSH 主机切换、浏览器下载与证书、协调智能体、远程任务和 GitHub 权限设置；词典共 4031 条。补齐“知识工作 / 软件工程”布局、沙箱可用性说明、“默认”标签及排队消息快捷键提示，语音设置的 Change 译为“更换”，Neno 等音色名称保留。已在 Windows 版 2.32.1 验证运行时注入，macOS 本轮未实机验证。详见 [2.32.1 适配记录](docs/compatibility_2321.md)。
+当前适配 **2.32.1**：该版新增 536 条界面文案，覆盖 SSH 主机切换、浏览器下载与证书、协调智能体、远程任务和 GitHub 权限设置；保守合并 42 条等价大小写词条后，词典共 3989 条，保留原有翻译覆盖。补齐“知识工作 / 软件工程”布局、沙箱可用性说明、“默认”标签及排队消息快捷键提示，语音设置的 Change 译为“更换”，Neno 等音色名称保留。新增多来源审计和词典内容指纹。已在 Windows 版 2.32.1 验证运行时注入，macOS 本轮未实机验证。详见 [2.32.1 适配记录](docs/compatibility_2321.md)。
 
 不改安装目录里的任何文件：以调试端口启动 Antigravity，通过 Chrome DevTools 协议把翻译脚本注入页面。想恢复英文，关掉再正常启动就行；官方更新也不会弄坏它。
 
@@ -49,9 +49,9 @@ python hanhua_v2.py --doctor                       # 详细只读诊断及处理
 
 遇到未翻译、端口连接失败或不确定守护是否有效时，先运行 `python hanhua_v2.py --doctor`；只想看简要快照用 `--status`。两者不会启动、关闭或重启应用，也不注入引擎、不修改词典、不创建守护日志或锁文件。可加 `--port 9333` 明确选择实例；不能与 `--watch`、`--force-restart` 或 `--autostart` 混用。
 
-输出包含 Antigravity 版本、已验证端口、候选窗口数、各窗口引擎快照和本地词典校验结果。窗口只以 `#1` 等本次序号显示，不输出标题、URL、会话内容或账号信息。词典会检查 JSON 格式、空值、类型及归一化重复键；引擎词条数与本地不同会提示重新注入，数量相同不代表词典内容完全一致。
+输出包含 Antigravity 版本、已验证端口、候选窗口数、各窗口引擎快照和本地词典校验结果。窗口只以 `#1` 等本次序号显示，不输出标题、URL、会话内容或账号信息。词典会检查 JSON 格式、空值、类型及归一化重复键，并比较运行引擎与本地有效词典的 SHA-256；词条数量或内容不同都会提示重新注入。指纹包含归一化后的键与原样译文，JSON 格式或文件排列变化不会误报；`--doctor` 会显示本地内容指纹及各窗口指纹摘要。
 
-退出码：`0` 为本次检查通过，`1` 为未运行、未就绪、引擎缺失/未知或检查失败，`2` 为参数错误。旧引擎没有只读快照时显示“未知”，不会为了检测而调用有副作用的探活函数；请手动运行 `--no-launch` 加载新版引擎后重查。诊断不证明 Windows 登录自启守护进程正在运行；查看自启项仍用 `--autostart status`。
+退出码：`0` 为本次检查通过，`1` 为未运行、未就绪、引擎缺失/未知、词典指纹不可用或检查失败，`2` 为参数错误。旧引擎没有只读快照时显示“未知”，已有快照但缺少内容指纹时会显示“指纹不可用”；不会为了检测而调用有副作用的探活函数。请手动运行 `--no-launch` 加载新版引擎后重查。诊断只核对当前窗口的词典快照，不证明全部界面翻译正确或 Windows 登录自启守护正在运行；查看自启项仍用 `--autostart status`。
 
 ### 安全守护
 
@@ -118,16 +118,22 @@ python caiji.py --port 9334         # 多实例时明确选择调试端口；默
 现在也可以对已下载的本地 bundle 使用只读审计器：
 
 ```bash
-python audit_bundle.py --bundle path/to/main.js --version 2.32.1 --output audit-report.json
+python audit_bundle.py --bundle path/to/main.js --version 2.32.1 --platform windows --output audit-report.json
 ```
 
-`audit_bundle.py` 不联网、不连接 CDP、不读取运行中的页面，也不修改字典。报告记录 bundle 与各字典 SHA-256，保留字符串位置和属性/直接文本证据，给出精确命中、`new-candidate`、`possible-rewrite`、`not-found-in-bundle`、动态模板、术语及占位符复核项。相似度默认至少 0.85 且只供人工审核；`not-found` 不等于废弃，工具不会自动添加、删除或发布词条。报告支持 JavaScript 中未配对的 UTF-16 代理字符，保存时将其转为 JSON 转义，输出仍是有效 UTF-8。`--expect-sha256` 可在审计前锁定已确认的 bundle；报告中的 `audit-report.json` 是本机产物，不要提交。
+`audit_bundle.py` 不联网、不连接 CDP、不读取运行中的页面，也不修改字典。报告记录 bundle 与各字典 SHA-256，保留字符串位置和属性/直接文本证据，给出精确命中、`new-candidate`、`possible-rewrite`、`not-found-in-bundle`、动态模板、术语及占位符复核项。相似度默认至少 0.85 且只供人工审核；`not-found` 不等于废弃，工具不会自动添加、删除或发布词条。报告支持 JavaScript 中未配对的 UTF-16 代理字符，保存时将其转为 JSON 转义，输出仍是有效 UTF-8。`--expect-sha256` 可在审计前锁定已确认的 bundle；报告是本机产物，不要提交，输出路径也不能覆盖输入文件或词典目录。
+
+审计器默认读取 [docs/translation_sources.json](docs/translation_sources.json)，也可用 `--sources path/to/sources.json` 指定已审核来源。该清单只保存固定 UI 文案、来源标识、最后确认版本、平台和审阅记录；当前包含官方 `project-4k-mode-copy` 的四条布局文字，不是完整运行配置。只有审计版本和明确的 `--platform windows` / `--platform macos` 同时匹配，平台专用记录才用于本次覆盖判断；其他记录仅供历史复核。来源清单仍需人工维护，不能据此认为所有运行配置都已扫描。
+
+报告 schema 1 保留 `dictionary_not_found` 的“bundle 未精确找到”含义，新增短词大小写覆盖、外部来源匹配及 `dictionary_unconfirmed`。仅有 ASCII 大小写区别、长度小于 30 且译文一致的短词可以由已有规则覆盖；这类词条不再误报为可能改写。清理词条时须结合来源和兼容范围逐项复核，并保留独立于当前词典的固定界面回归。
 
 离线回归检查：`python -m unittest discover -s tests -v`（需本机有 Node.js，不会启动或修改 Antigravity）。改完词典或引擎都运行一次。GitHub Actions 的 `Offline regression` 工作流会在 Python 3.11、3.12、3.13 上重复运行测试、语法检查和启动器编码检查，并在独立作业中安装 Chromium 运行无用户数据的浏览器夹具。
 
 ### 验证范围
 
-离线测试覆盖引擎身份检查、隐私边界、多窗口调度、采集器、bundle 审计、守护连接、重注入稳定性，以及合成 DOM 的初始扫描/变更批次/空闲属性兜底。浏览器夹具使用无账号和用户内容的本地页面。
+离线测试覆盖引擎身份检查、隐私边界、多窗口调度、采集器、多来源 bundle 审计、守护连接、词典内容指纹、重注入稳定性，以及合成 DOM 的初始扫描/变更批次/空闲属性兜底。固定界面和已清理大小写写法的预期译文独立于当前词典保存，误删词条会使对应回归失败。浏览器夹具使用无账号和用户内容的本地页面。
+
+2026-11-16 Windows Antigravity 2.32.1：263 项回归全部通过，无跳过，含 6 项 Chromium 夹具；编译、JavaScript 语法及差异检查通过。保守合并 42 条等价大小写短词，词典为 3989 条，修改前全部 4031 个原文在新引擎中保持原有文本与属性翻译覆盖。只读提取的 bundle 指纹与上轮一致；已有一个主窗口安全重注入成功，`--doctor` 校验词典内容指纹后通过。
 
 2026-11-15 Windows Antigravity 2.32.1：234 项回归全部通过，包含 4 项 Chromium 浏览器夹具；Python 编译和 JavaScript 语法检查通过。安全复用已有实例，`--no-launch --watch 0` 向一个已确认主窗口注入 4031 条词典，随后 `--doctor` 通过。两种布局、两个位置的沙箱说明、语音“更换”按钮以及两个提示框的全部文字已在实机核对。安装包提取与运行中界面服务返回的 `main.js` SHA-256 均为 `4c0a1ff5659e7dd92e6ad249a386c0dbce2c8e94b88522a2f366ff20b397081e`。默认采集和漏翻计数以内存执行，未导出界面原文。四份原有词典的 SHA-256 保持不变；532 条新增词条在新版 bundle 中精确命中，另 4 条布局文字来自官方配置，并在已核验的设置控件中确认。
 
@@ -165,8 +171,9 @@ shouhu.py            可选守护进程（仅 Windows）：登录自启，自动
 qidong.bat           Windows 一键启动器
 qidong_mac.sh        macOS 一键启动器
 qidong_mac.command   macOS 双击入口（调 qidong_mac.sh）
-dicts/               字典（common.json + ui_v2*.json，共 4031 条）
+dicts/               字典（common.json + ui_v2*.json，共 3989 条）
 docs/compatibility_2321.md  2.32.1 的 bundle 指纹、词条审阅与验证范围
+docs/translation_sources.json  已审核固定来源与等价词条清理依据
 tests/               离线词典、完整引擎、目标识别及多窗口回归测试
 tests/browser_fixture.html  无用户数据的异步/Shadow DOM/输入保护夹具
 audit_bundle.py      本地 bundle 版本审计器（只读，不连接 CDP）

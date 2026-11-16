@@ -87,7 +87,9 @@ tests/               unittest + Node.js 完整引擎离线回归（无需浏览�
 ```
 
 `engine_template.js` 是无需构建的独立 IIFE 源文件。`build_engine_js()` 从脚本同目录读取，
-PyInstaller 部署则回退到 `_MEIPASS`；通过 `DICT_PLACEHOLDER` 与 `PRIVACY_PLACEHOLDER` 嵌入数据。
+PyInstaller 部署则回退到 `_MEIPASS`；通过 `DICT_PLACEHOLDER`、`PRIVACY_PLACEHOLDER` 和
+`FINGERPRINT_PLACEHOLDER` 嵌入数据。`dictionary_fingerprint()` 对有效归一化键和原样译文做稳定
+SHA-256，不依赖 JSON 格式、文件名或加载排列；引擎快照与诊断共用此实现。
 改模板不再经过 Python 三引号转义层；仍需运行 Node.js 语法与完整引擎回归。
 
 **平台分支**：`candidate_paths()` / `launch_antigravity()` 和 `cdp_discovery.py` 的进程/端口枚举分 Windows / macOS。
@@ -170,11 +172,13 @@ Windows 使用 `tasklist` CSV + `netstat`，macOS 使用 `pgrep` + `lsof`；只�
 0 检查通过、1 未就绪或需要处理、2 参数错误；`--doctor` 多显示文件级校验和建议，不自动修复。
 
 `engine.active()` 会执行 `ensureTrusted()`，可能停止观察器，**不能用于只读诊断**。
-引擎维护纯数据 `state={started,stopped,entries}`；诊断以 own-property descriptor 读取，
+引擎维护纯数据 `state={started,stopped,entries,dictionaryFingerprint}`；诊断以 own-property descriptor 读取，
 不调用函数/getter、不读取 `misses`。旧引擎无快照则未知，不猜测运行正常。
 窗口仅输出本次序号、固定状态、词条数；禁止输出标题、URL、target ID、完整 UA、配置或 CSRF。
 词典检查保留 JSON pairs 以识别重复键，错误仅输出分类/文件名，不能回显原文或解析异常。
-词条数量不同提示刷新；数量相同不是字典指纹，不代表内容一致。
+词条数量或内容指纹不同均提示刷新；只有条数和 SHA-256 都与通过严格校验的本地词典一致才通过。
+指纹缺失、无效或是 getter 时返回不可用，不调用 getter，也不回显页面提供的任意字符串。
+旧引擎缺少指纹需手动重注入；诊断不做注入或守护热更新。
 
 每目标串行请求并递增 ID，忽略事件与旧请求回包；不使用多个同时 `recv()` 的协程。
 取消必须向外传播，watch/CLI 在 finally/async context 关闭所有会话，关闭操作自身也受超时限制。
@@ -265,9 +269,11 @@ title/aria-label 不自动视为固定元数据。按钮/明确控件语义及�
 ## 字典约定
 
 `dicts/*.json` 运行时全部合并成一个 map。`common.json` 放通用 UI 词（23 条），
-`ui_v2.json` 放 2.0 界面文案（2401 条，2026-10 按 bundle 审计法从 2.23.1 补齐），
-`ui_v2_225.json` 放 2.25.25 的增量（471 条），`ui_v2_229.json` 放 2.29.0 的增量（600 条），
-`ui_v2_232.json` 放 2.32.1 的增量（536 条）；总计 4031 条。**所有文件之间不得有重复 key**——
+`ui_v2.json` 放 2.0 界面文案（2362 条，2026-10 按 bundle 审计法从 2.23.1 补齐），
+`ui_v2_225.json` 放 2.25.25 的增量（468 条），`ui_v2_229.json` 放 2.29.0 的增量（600 条），
+`ui_v2_232.json` 放 2.32.1 的增量（536 条）；总计 3989 条。2026-11-16 合并 42 条仅有 ASCII
+大小写区别且译文相同的短词，保留所有原文的匹配覆盖；逐项依据在 `docs/translation_sources.json`。
+**所有文件之间不得有重复 key**——
 同一条翻译存在两处，改一处另一处就会漂移。`common.json` 是通用词的唯一归属地。
 按版本拆文件而不是并进 `ui_v2.json`，是为了让「哪批词条对应哪次官方更新」一眼可查。
 
@@ -295,17 +301,18 @@ title/aria-label 不自动视为固定元数据。按钮/明确控件语义及�
 失败保留旧文件；原子写入临时文件、pending/misses 报告均不提交。旧报告可能含私人原文，不能默认视为安全。
 
 **官方更新后系统性地找漏翻（bundle 审计法）**：逐页跑 `caiji.py` 只覆盖你点到的那几页，
-漏掉的页面永远不会暴露。要一次拿全，直接从 SPA 的 JS bundle 里挖——界面全部文案都在里面。
+漏掉的页面永远不会暴露。系统审计以 SPA 的 JS bundle 为主要静态来源，另需核验官方配置等外部
+固定文案；仅扫 bundle 无法覆盖全部来源。配置审阅仅记录明确的固定标签，不能导出完整配置。
 
 1. 带调试端口启动后，在页面里 `performance.getEntriesByType('resource')` 列出加载的 .js，
-   只有两个：`https://127.0.0.1:<端口>/main.js`（约 10 MB，Closure 编译产物，文案全在这里）
+   主 bundle 为 `https://127.0.0.1:<端口>/main.js`（当前约 12 MB，Closure 编译产物，大部分静态文案在这里）
    和 `prism_bundle.js`（只是语法高亮）。用 `curl -sk --noproxy '*'` 下载。
 2. **比对前先把 bundle 里的弯引号归一成半角。** 字典 key 在加载时已被 `normalize_text()`
    归一，而 bundle 里 `Don't` 用的是 U+2019——不归一，711 条长 key 只匹配上 326 条（46%），
    会误判成「大批词条失效」。用 1:1 字符映射替换，字节偏移不变，可继续按偏移定位。
 3. 抽字符串字面量，与字典做**双向 diff**：
-   - 「字典有、bundle 没有」= 官方改写了原文（2026-10 那次 470 条，其中 13 条高相似度）。
-     用词重叠预筛 + `difflib` 相似度 ≥ 0.85 能自动配对回旧译文，剩下的才人工看。
+   - 「字典有、bundle 没有」= 待复核候选，可能是大小写、官方配置、条件加载、不同平台、旧版或改写。
+     用词重叠预筛 + `difflib` 相似度 ≥ 0.85 只生成可能配对，不能自动回用译文或删除旧词条。
      相似度阈值别放太低——0.72 档开始大量误配（`Clear conversation` → `New conversation`）。
    - 「bundle 有、字典没有」= 新增文案。
 4. **噪声过滤是成败关键。** bundle 里绝大多数字面量不是界面文案，按特征剔除：
@@ -351,11 +358,16 @@ title/aria-label 不自动视为固定元数据。按钮/明确控件语义及�
     同时补沙箱预设模板和两类提示框的精确来源许可，保护音色名称；最终 234 项回归通过，
     含 4 项 Chromium 夹具，Windows 重注入 4031 条并通过诊断。完整记录见 `docs/compatibility_2321.md`。
 
-现在可用只读 `audit_bundle.py --bundle <本地 main.js> --version <已确认版本> --output audit-report.json`
+现在可用只读 `audit_bundle.py --bundle <本地 main.js> --version <已确认版本> --platform windows --output audit-report.json`
 固化这套流程。它不联网、不连 CDP、不读取运行页面；报告包含 bundle/词典 SHA-256、字符串位置与
 属性/直接文本证据，双向 diff 分类为 `new-candidate`、`possible-rewrite`、`not-found-in-bundle`，
 另列动态模板、术语、占位符和归一化重复键。相似度默认 `>=0.85` 且只能人工复核；`not-found` 可能是
 改写、条件模块或旧词条，不能自动删除。不要把 `--output` 指向词典目录，报告也不能自动回写字典。
+默认读取 `docs/translation_sources.json`，`--sources` 可选其他已审阅清单；版本和明确的平台都匹配
+才使用对应外部来源，否则只保留历史依据。schema 1 新增短词覆盖、来源匹配、`dictionary_unconfirmed`
+和审阅记录，原有 `dictionary_not_found` 含义不变。CLI 禁止报告覆盖 bundle、来源清单或词典目录。
+清单仅接受固定 UI 字符串和有限来源、版本、平台、日期字段；拒绝私人路径、邮箱、完整配置、
+重复字段和重复归一化来源标签。审计工具始终只读，删除必须有人工审查及独立固定文案回归。
 
 CI 运行 `python -B -m unittest discover -s tests -v`、`compileall`、启动器 ASCII 检查及提交空白检查；
 独立浏览器作业安装 Playwright Chromium，运行 `tests/test_browser_fixture.py` 的合成页面测试。

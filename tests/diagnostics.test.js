@@ -45,7 +45,7 @@ function test({ expression, scope }) {
         return result;
     };
     const validEngine = () => ({
-        scope, state: { started: true, stopped: false, entries: 123 },
+        scope, state: { started: true, stopped: false, entries: 123, dictionaryFingerprint: 'a'.repeat(64) },
         active: fail, disconnect: fail, observe: fail,
     });
 
@@ -59,7 +59,7 @@ function test({ expression, scope }) {
     ]) {
         const h = harness();
         const engine = validEngine();
-        engine.state = { started, stopped, entries: 123 };
+        engine.state = { started, stopped, entries: 123, dictionaryFingerprint: 'a'.repeat(64) };
         Object.defineProperty(engine, "misses", { get: fail });
         Object.freeze(engine.state);
         Object.freeze(engine);
@@ -67,9 +67,27 @@ function test({ expression, scope }) {
         const result = run(h);
         assert.equal(result.engine, expected);
         assert.equal(result.entries, 123);
+        assert.equal(result.dictionaryFingerprint, 'a'.repeat(64));
         assert.equal(result.confirmed, true);
         assert.equal(h.window.__ag_hanhua_engine__, engine);
-        assert.deepEqual(engine.state, { started, stopped, entries: 123 });
+        assert.deepEqual(engine.state, { started, stopped, entries: 123, dictionaryFingerprint: 'a'.repeat(64) });
+    }
+
+    for (const change of [
+        state => { delete state.dictionaryFingerprint; },
+        state => { state.dictionaryFingerprint = secret; },
+        state => { state.dictionaryFingerprint = 'a'.repeat(63); },
+        state => { state.dictionaryFingerprint = 'A'.repeat(64); },
+        state => { state.dictionaryFingerprint = 123; },
+        state => { Object.defineProperty(state, 'dictionaryFingerprint', { get: fail }); },
+    ]) {
+        const h = harness();
+        const engine = validEngine();
+        change(engine.state);
+        h.window.__ag_hanhua_engine__ = engine;
+        const result = run(h);
+        assert.equal(result.engine, 'running');
+        assert.equal(result.dictionaryFingerprint, null, 'unknown fingerprint is never read or echoed');
     }
 
     const invalid = [

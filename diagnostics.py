@@ -39,6 +39,7 @@ class DictionaryReport:
     files: list = field(default_factory=list)
     entries: int = 0
     errors: list = field(default_factory=list)
+    fingerprint: str = ""
 
     @property
     def ok(self):
@@ -52,16 +53,18 @@ class WindowStatus:
     state: str
     entries: int | None = None
     reason: str = ""
+    fingerprint: str | None = None
 
 
 def inspect_dictionaries(directory=None):
-    from hanhua_v2 import normalize_text
+    from hanhua_v2 import dictionary_fingerprint, normalize_text
 
     directory = DICT_DIR if directory is None else Path(directory)
     report = DictionaryReport()
     raw_seen = set()
     normalized_seen = set()
     valid_keys = set()
+    effective = {}
     try:
         paths = sorted(directory.glob("*.json"))
     except OSError:
@@ -106,10 +109,13 @@ def inspect_dictionaries(directory=None):
                 continue
             item.entries += 1
             valid_keys.add(normalized)
+            effective[normalized] = value
         item.errors = sorted(set(item.errors))
     report.entries = len(valid_keys)
     if not report.entries:
         report.errors.append("dictionary-empty")
+    if report.ok:
+        report.fingerprint = dictionary_fingerprint(effective)
     return report
 
 
@@ -138,12 +144,15 @@ def diagnostic_expression(page):
             const started = ownData(snapshot, 'started');
             const stopped = ownData(snapshot, 'stopped');
             const entries = ownData(snapshot, 'entries');
+            const fingerprint = ownData(snapshot, 'dictionaryFingerprint');
             if (ownData(engine, 'scope') !== EXPECTED_SCOPE || typeof started !== 'boolean'
                 || typeof stopped !== 'boolean' || !Number.isSafeInteger(entries) || entries < 0) {
                 return {status: 'ready', confirmed: true, engine: 'unknown'};
             }
             return {status: 'ready', confirmed: true,
-                engine: stopped ? 'stopped' : started ? 'running' : 'not-started', entries};
+                engine: stopped ? 'stopped' : started ? 'running' : 'not-started', entries,
+                dictionaryFingerprint: typeof fingerprint === 'string' && /^[0-9a-f]{64}$/.test(fingerprint)
+                    ? fingerprint : null};
         } catch (_) {
             return {status: 'error', reason: 'probe-unavailable'};
         }
@@ -186,7 +195,10 @@ def _parse_reply(number, reply):
     if (engine not in ("running", "stopped", "not-started") or type(entries) is not int
             or not 0 <= entries <= 9007199254740991):
         return WindowStatus(number, "error", reason="invalid-probe-result")
-    return WindowStatus(number, engine, entries)
+    fingerprint = value.get("dictionaryFingerprint")
+    if fingerprint is not None and (not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)):
+        return WindowStatus(number, "error", reason="invalid-probe-result")
+    return WindowStatus(number, engine, entries, fingerprint=fingerprint)
 
 
 async def _inspect_windows(instance):
@@ -211,7 +223,7 @@ def _display_filename(name):
     return "".join(char if char.isprintable() else "?" for char in name)
 
 
-def _window_label(status, entries):
+def _window_label(status, entries, fingerprint):
     labels = {
         "running": "引擎运行快照正常", "stopped": "引擎已停止", "not-started": "引擎尚未启动",
         "missing": "未发现翻译引擎", "unknown": "引擎状态未知（旧版或快照不可读）",
@@ -219,7 +231,16 @@ def _window_label(status, entries):
     }
     if status.state == "running" and status.entries != entries:
         return "引擎词条数量与本地词典不同"
+    if status.state == "running" and status.fingerprint is None:
+        return "词典内容指纹不可用（旧引擎或快照不可读）"
+    if status.state == "running" and status.fingerprint != fingerprint:
+        return "引擎词典内容与本地不同"
     return labels[status.state]
+
+
+def _dictionary_matches(status, dictionaries):
+    return bool(status.state == "running" and status.entries == dictionaries.entries
+                and dictionaries.fingerprint and status.fingerprint == dictionaries.fingerprint)
 
 
 def run(port=None, doctor=False):
@@ -233,6 +254,8 @@ def run(port=None, doctor=False):
         if doctor or item.errors:
             suffix = ", ".join(item.errors) if item.errors else "ok"
             print(f"  {_display_filename(item.name)}：{item.entries} 条；{suffix}")
+    if doctor and dictionaries.fingerprint:
+        print(f"词典内容 SHA-256：{dictionaries.fingerprint}")
 
     reason = ""
     instance = None
@@ -263,15 +286,16 @@ def run(port=None, doctor=False):
             reason = "no-targets"
         for status in windows:
             detail = f"；词条 {status.entries}" if doctor and status.entries is not None else ""
+            if doctor and status.fingerprint is not None:
+                detail += f"；内容指纹 {status.fingerprint[:12]}"
             detail += f"；{status.reason}" if status.reason else ""
-            print(f"  #{status.number}：{_window_label(status, dictionaries.entries)}{detail}")
-        running = sum(status.state == "running" and status.entries == dictionaries.entries for status in windows)
+            print(f"  #{status.number}：{_window_label(status, dictionaries.entries, dictionaries.fingerprint)}{detail}")
+        running = sum(_dictionary_matches(status, dictionaries) for status in windows)
         skipped = sum(status.state == "skipped" for status in windows)
         print(f"窗口：运行正常 {running}；跳过 {skipped}；需处理 {len(windows) - running - skipped}")
 
     healthy = bool(windows) and any(status.state == "running" for status in windows)
-    healthy = healthy and all(status.state == "skipped" or (
-        status.state == "running" and status.entries == dictionaries.entries) for status in windows)
+    healthy = healthy and all(status.state == "skipped" or _dictionary_matches(status, dictionaries) for status in windows)
     healthy = bool(healthy and dictionaries.ok and not reason)
     print("结果：通过（仅检查快照，未改动应用）" if healthy else "结果：需处理或尚未就绪（未改动应用）")
     if doctor and not healthy:
@@ -286,8 +310,8 @@ def run(port=None, doctor=False):
         elif reason:
             print("建议：等待应用界面加载完成后重试，并确认本机调试端口可访问。")
         if any(status.state in ("missing", "unknown", "stopped", "not-started") or (
-                status.state == "running" and status.entries != dictionaries.entries) for status in windows):
-            print("建议：确认工作已保存后，手动运行 --no-launch 重新注入；诊断不会自动注入。")
+                status.state == "running" and not _dictionary_matches(status, dictionaries)) for status in windows):
+            print("建议：手动运行 --no-launch 重新注入；诊断不会自动注入。")
         if windows and all(status.state == "skipped" for status in windows):
             print("建议：打开 Antigravity 主界面后重试；独立网页与预览不会作为主窗口。")
         if any(status.state in ("pending", "error") for status in windows):

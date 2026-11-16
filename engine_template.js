@@ -362,7 +362,8 @@
     // 旧引擎或已离开主界面的引擎必须完全停止，迟到的重试不能重新挂载。
     let stopped = false;
     let timerId = null;
-    const state = { started: false, stopped: false, entries: map.size, privacy: 1 };
+    const state = { started: false, stopped: false, entries: map.size, privacy: 1,
+        dictionaryFingerprint: FINGERPRINT_PLACEHOLDER };
     function ensureTrusted() {
         if (stopped) return false;
         if (trustedPage()) return true;

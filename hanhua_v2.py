@@ -13,6 +13,7 @@
 import os
 import sys
 import json
+import hashlib
 import time
 import re
 import argparse
@@ -105,6 +106,12 @@ def load_dictionary():
     return total_map
 
 
+def dictionary_fingerprint(dict_map):
+    """Hash the effective normalized keys and exact translations, independent of file order."""
+    canonical = json.dumps(dict_map, ensure_ascii=True, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    return hashlib.sha256(canonical.encode('ascii')).hexdigest()
+
+
 def _load_engine_template():
     """Load the editable source asset, with PyInstaller's bundled-data fallback."""
     candidates = [Path(__file__).resolve().with_name("engine_template.js")]
@@ -131,7 +138,8 @@ def build_engine_js(dict_map):
     dict_json = json.dumps(dict_map, ensure_ascii=False, separators=(',', ':'))
 
     js_source = _load_engine_template()
-    return js_source.replace("PRIVACY_PLACEHOLDER", privacy_policy.build_policy_js()).replace("DICT_PLACEHOLDER", dict_json)
+    return js_source.replace("PRIVACY_PLACEHOLDER", privacy_policy.build_policy_js()).replace(
+        "FINGERPRINT_PLACEHOLDER", json.dumps(dictionary_fingerprint(dict_map))).replace("DICT_PLACEHOLDER", dict_json)
 
 
 def find_antigravity_exe(install_dir=None):

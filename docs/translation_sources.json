@@ -1,0 +1,736 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "id": "project-4k-mode-copy",
+      "kind": "official-config",
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "windows"
+      ],
+      "reviewed_on": "2026-11-15",
+      "keys": [
+        "Knowledge Work",
+        "Simplified interface for research, writing, and everyday tasks.",
+        "Software Engineering",
+        "Full interface for coding, developer tools, and managing agents."
+      ]
+    }
+  ],
+  "reviews": [
+    {
+      "file": "ui_v2_225.json",
+      "key": "scheduled tasks",
+      "translation": "定时任务",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "common.json",
+        "key": "Scheduled Tasks"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Add Context",
+      "translation": "添加上下文",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Add context"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Add Rule",
+      "translation": "添加规则",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Add rule"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Add folder",
+      "translation": "添加文件夹",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Add Folder"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "At Mention Code Block",
+      "translation": "@ 提及代码块",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "At mention code block"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Automations",
+      "translation": "自动化",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2_225.json",
+        "key": "automations"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Bad Response",
+      "translation": "响应不佳",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Bad response"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Cancel task",
+      "translation": "取消任务",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Cancel Task"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Click to Open Docs",
+      "translation": "点击打开文档",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Click to open docs"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Conversation history",
+      "translation": "对话历史",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "common.json",
+        "key": "Conversation History"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Copy Path",
+      "translation": "复制路径",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Copy path"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Copy trajectory ID",
+      "translation": "复制轨迹 ID",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Copy Trajectory ID"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Delete conversation",
+      "translation": "删除对话",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Delete Conversation"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Edit Config",
+      "translation": "编辑配置",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Edit config"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Enable Recommended Skills",
+      "translation": "启用推荐技能",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Enable recommended skills"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Export Artifact",
+      "translation": "导出产物",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Export artifact"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Full Access",
+      "translation": "完全访问",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Full access"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Good Response",
+      "translation": "响应良好",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Good response"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Insert in Terminal",
+      "translation": "插入到终端",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Insert in terminal"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Keyboard Shortcuts",
+      "translation": "键盘快捷键",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Keyboard shortcuts"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Match Case",
+      "translation": "区分大小写",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Match case"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "No Results",
+      "translation": "无结果",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "No results"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Open folder",
+      "translation": "打开文件夹",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Open Folder"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Open in Browser",
+      "translation": "在浏览器中打开",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Open in browser"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Open in New Tab",
+      "translation": "在新标签页中打开",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Open in new tab"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Provide feedback",
+      "translation": "提供反馈",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Provide Feedback"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Queued Messages",
+      "translation": "排队消息",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Queued messages"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Search Conversations",
+      "translation": "搜索对话",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Search conversations"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Search projects",
+      "translation": "搜索项目",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Search Projects"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Select all",
+      "translation": "全选",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Select All"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Select model",
+      "translation": "选择模型",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Select Model"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Send immediately",
+      "translation": "立即发送",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Send Immediately"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Show Less",
+      "translation": "显示更少",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Show less"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Sign In",
+      "translation": "登录",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Sign in"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Sign Out",
+      "translation": "退出登录",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Sign out"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Sort by",
+      "translation": "排序方式",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Sort By"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Stop Execution",
+      "translation": "停止执行",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Stop execution"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Stop Recording",
+      "translation": "停止录制",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Stop recording"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Try Again",
+      "translation": "重试",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Try again"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2.json",
+      "key": "Use Regular Expression",
+      "translation": "使用正则表达式",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2.json",
+        "key": "Use regular expression"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2_225.json",
+      "key": "Recent Files",
+      "translation": "最近的文件",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2_225.json",
+        "key": "Recent files"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    },
+    {
+      "file": "ui_v2_225.json",
+      "key": "Stop Subagent",
+      "translation": "停止子智能体",
+      "action": "remove-equivalent",
+      "replacement": {
+        "file": "ui_v2_225.json",
+        "key": "Stop subagent"
+      },
+      "last_verified_version": "2.32.1",
+      "platforms": [
+        "all"
+      ],
+      "verification": "offline-engine",
+      "reviewed_on": "2026-11-16",
+      "reason": "两个完整短词条仅 ASCII 大小写不同且译文一致；文本和获准属性均由现有小于 30 字符的大小写匹配覆盖，不参与长句子串替换。"
+    }
+  ]
+}

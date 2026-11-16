@@ -117,6 +117,59 @@ class BrowserFixtureTests(unittest.TestCase):
         self._wait(page, "document.querySelector('#static-text').textContent === '你好'")
         self._wait(page, "document.querySelector('#shadow-host').shadowRoot.textContent.includes('影子标签')")
 
+    def test_fixed_ui_and_removed_case_aliases_survive_reinjection_and_reload(self):
+        from tests.test_dictionary_maintenance import CRITICAL_UI_CASES
+        import json
+
+        manifest = json.loads((ROOT / "docs" / "translation_sources.json").read_text(encoding="utf-8"))
+        cases = CRITICAL_UI_CASES + [(item["key"], item["translation"]) for item in manifest["reviews"]]
+        dictionary = hanhua_v2.load_dictionary()
+        engine = hanhua_v2.build_engine_js(dictionary)
+        fingerprint = hanhua_v2.dictionary_fingerprint(dictionary)
+        page = self.page
+        for navigation in range(2):
+            if navigation:
+                page.reload(wait_until="domcontentloaded")
+            page.evaluate("""cases => {
+                const root = document.querySelector('#fixture-root');
+                for (const [index, [raw]] of cases.entries()) {
+                    const button = document.createElement('button');
+                    button.id = 'critical-ui-' + index;
+                    button.title = raw;
+                    button.setAttribute('aria-label', raw);
+                    button.textContent = raw;
+                    root.append(button);
+                }
+                const voice = document.createElement('span');
+                voice.id = 'protected-voice-name';
+                voice.dataset.testid = 'voice-settings-name';
+                voice.textContent = 'File';
+                root.append(voice);
+            }""", cases)
+            for _ in range(2):
+                page.evaluate(engine)
+                page.wait_for_function("""cases => cases.every(([, expected], index) => {
+                    const button = document.querySelector('#critical-ui-' + index);
+                    return button.textContent === expected && button.title === expected
+                        && button.getAttribute('aria-label') === expected;
+                })""", arg=cases, timeout=5000)
+                self.assertEqual(page.locator('#protected-voice-name').text_content(), 'File')
+                self.assertEqual(page.evaluate('window.__ag_hanhua_engine__.state.dictionaryFingerprint'), fingerprint)
+
+    def test_equal_count_dictionary_changes_update_the_browser_fingerprint(self):
+        page = self.page
+        page.evaluate(self.engine)
+        self._wait(page, "document.querySelector('#safe-input').placeholder === '文件'")
+        original = page.evaluate('window.__ag_hanhua_engine__.state.dictionaryFingerprint')
+        changed = {**DICTIONARY, "File": "文件更新"}
+        page.evaluate(hanhua_v2.build_engine_js(changed))
+        self.assertEqual(page.evaluate('window.__ag_hanhua_engine__.state.entries'), len(DICTIONARY))
+        updated = page.evaluate('window.__ag_hanhua_engine__.state.dictionaryFingerprint')
+        self.assertNotEqual(updated, original)
+        self.assertEqual(updated, hanhua_v2.dictionary_fingerprint(changed))
+        page.evaluate("document.querySelector('#safe-input').setAttribute('placeholder', 'File')")
+        self._wait(page, "document.querySelector('#safe-input').placeholder === '文件更新'")
+
     def test_audited_settings_tooltips_and_reused_portal_privacy(self):
         page = self.page
         page.evaluate("""() => {

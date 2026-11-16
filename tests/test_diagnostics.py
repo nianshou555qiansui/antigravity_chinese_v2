@@ -24,7 +24,8 @@ SECRET = "SECRET_ACCOUNT_PRIVATE_URL_CSRF"
 
 
 def reply(state="running", entries=1, **extra):
-    value = {"status": "ready", "confirmed": True, "engine": state, "entries": entries}
+    value = {"status": "ready", "confirmed": True, "engine": state, "entries": entries,
+             "dictionaryFingerprint": hh.dictionary_fingerprint({"File": "file-value"})}
     value.update(extra)
     return {"result": {"result": {"value": value}}}
 
@@ -107,12 +108,27 @@ class DictionaryDiagnosticsTests(unittest.TestCase):
         self.assertTrue(report.ok)
         self.assertEqual(report.entries, 2)
         self.assertEqual([item.name for item in report.files], ["a.json", "b.json"])
+        self.assertEqual(report.fingerprint, hh.dictionary_fingerprint({"File": "file-value", "Save": "save-value"}))
+
+    def test_fingerprint_tracks_effective_content_not_json_format_or_file_order(self):
+        self.write("a.json", json.dumps({"  Don’t  ": "exact  value", "File": "first"}, ensure_ascii=False))
+        original = diagnostics.inspect_dictionaries(self.directory).fingerprint
+        self.memory.files.clear()
+        self.write("z.json", '{"File":"first"}')
+        self.write("b.json", '{"Don\u0027t":"exact  value"}')
+        equivalent = diagnostics.inspect_dictionaries(self.directory)
+        self.assertEqual(equivalent.fingerprint, original)
+        self.write("b.json", '{"Don\u0027t":"exact value"}')
+        changed = diagnostics.inspect_dictionaries(self.directory)
+        self.assertEqual(changed.entries, equivalent.entries)
+        self.assertNotEqual(changed.fingerprint, original)
 
     def test_raw_and_normalized_duplicates_inside_and_across_files_fail(self):
         self.write("a.json", '{"File":"a","File":"b"," Save ":"c","Save":"d"}')
         self.write("b.json", '{"File":"e","Save\\t":"f"}')
         report = diagnostics.inspect_dictionaries(self.directory)
         self.assertFalse(report.ok)
+        self.assertEqual(report.fingerprint, "")
         self.assertEqual(report.entries, 2)
         for item in report.files:
             self.assertIn("duplicate-raw-key", item.errors)
@@ -233,6 +249,35 @@ class DiagnosisRunTests(unittest.TestCase):
                 code, _ = self.run_diagnosis(doctor=True)
                 self.assertEqual(code, 1)
 
+    def test_equal_counts_with_changed_keys_or_values_need_refresh(self):
+        for dictionary in ({"File": "changed-value"}, {"Save": "file-value"}):
+            with self.subTest(dictionary=dictionary):
+                self.pool = FakePool([reply(dictionaryFingerprint=hh.dictionary_fingerprint(dictionary))])
+                code, output = self.run_diagnosis(doctor=True)
+                self.assertEqual(code, 1)
+                self.assertIn("词典内容与本地不同", output)
+                self.assertIn("--no-launch", output)
+                self.assertIn("运行正常 0", output)
+
+    def test_missing_fingerprint_never_passes_using_only_equal_counts(self):
+        for missing in (None, "absent"):
+            response = reply(dictionaryFingerprint=None)
+            if missing == "absent":
+                del response["result"]["result"]["value"]["dictionaryFingerprint"]
+            self.pool = FakePool([response])
+            code, output = self.run_diagnosis(doctor=True)
+            self.assertEqual(code, 1)
+            self.assertIn("指纹不可用", output)
+            self.assertIn("--no-launch", output)
+
+    def test_one_stale_window_prevents_a_healthy_overall_result(self):
+        self.find.return_value = instance(pages=2)
+        self.pool = FakePool([reply(), reply(dictionaryFingerprint="0" * 64)])
+        code, output = self.run_diagnosis(doctor=True)
+        self.assertEqual(code, 1)
+        self.assertIn("运行正常 1", output)
+        self.assertIn("需处理 1", output)
+
     def test_other_pages_can_be_skipped_but_errors_or_pending_prevent_success(self):
         self.find.return_value = instance(pages=2)
         for status, expected in (("skipped", 0), ("pending", 1), ("error", 1)):
@@ -293,6 +338,9 @@ class DiagnosisRunTests(unittest.TestCase):
             {"result": {"result": {"value": SECRET}}},
             reply(confirmed=False), reply(confirmed=1), reply(entries=True), reply(entries=-1),
             reply(entries=9007199254740992), reply(state=SECRET),
+            reply(dictionaryFingerprint=SECRET), reply(dictionaryFingerprint=[]),
+            reply(dictionaryFingerprint=True), reply(dictionaryFingerprint="a" * 63),
+            reply(dictionaryFingerprint="A" * 64),
         ]
         for response in cases:
             with self.subTest(response=response):

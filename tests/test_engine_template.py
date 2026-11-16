@@ -21,6 +21,7 @@ class EngineTemplateTests(unittest.TestCase):
         self.assertIn("const privacy =", generated)
         self.assertNotIn("DICT_PLACEHOLDER", generated)
         self.assertNotIn("PRIVACY_PLACEHOLDER", generated)
+        self.assertNotIn("FINGERPRINT_PLACEHOLDER", generated)
 
     def test_packaged_resource_fallback_is_used_when_source_resource_is_missing(self):
         with tempfile.TemporaryDirectory() as directory:

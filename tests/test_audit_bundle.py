@@ -1,6 +1,8 @@
 """Offline tests for the read-only local bundle audit tool."""
 
+import contextlib
 import hashlib
+import io
 import json
 from pathlib import Path
 import sys
@@ -95,6 +97,15 @@ const marker="Example @ mention & Terms of Service!";
 
     def run_audit(self, **kwargs):
         return audit.audit(self.bundle, "2.99.0", self.dict_dir, **kwargs)
+
+    def source_manifest(self, keys, version="2.99.0", platforms=None):
+        path = self.root / "sources.json"
+        source = {"schema": 1, "sources": [{
+            "id": "fixture-layout-copy", "kind": "official-config", "last_verified_version": version,
+            "platforms": ["windows"] if platforms is None else platforms, "reviewed_on": "2026-11-16", "keys": keys,
+        }], "reviews": []}
+        path.write_text(json.dumps(source), encoding="utf-8")
+        return path
 
     def test_bundle_fingerprint_and_dictionary_fingerprints_are_recorded(self):
         report = self.run_audit()
@@ -194,6 +205,134 @@ const marker="Example @ mention & Terms of Service!";
         kinds = {item["kind"] for item in report["dictionary_integrity"]["problems"]}
         self.assertIn("duplicate-json-key", kinds)
         self.assertIn("duplicate-normalized-key", kinds)
+
+    def test_config_source_covers_a_dictionary_entry_absent_from_bundle(self):
+        manifest = self.source_manifest(["Playback speed (< / >)"])
+        report = self.run_audit(source_manifest=manifest, platform="windows")
+        entry = next(item for item in report["dictionary_not_found"] if item["key"] == "Playback speed (< / >)")
+        self.assertEqual(entry["coverage"], "reviewed-source")
+        self.assertEqual(entry["last_verified_version"], "2.99.0")
+        self.assertTrue(entry["sources"][0]["applies_to_audit"])
+        self.assertNotIn(entry["key"], {item["key"] for item in report["dictionary_unconfirmed"]})
+        self.assertEqual(report["summary"]["reviewed_source_dictionary_matches"], 1)
+        self.assertEqual(report["source_manifest"]["sha256"], hashlib.sha256(manifest.read_bytes()).hexdigest())
+
+    def test_config_source_requires_matching_version_and_explicit_platform(self):
+        for version, platform in (("2.98.0", "windows"), ("2.99.0", "macos"), ("2.99.0", None)):
+            with self.subTest(version=version, platform=platform):
+                manifest = self.source_manifest(["Playback speed (< / >)"], version)
+                report = self.run_audit(source_manifest=manifest, platform=platform)
+                entry = next(item for item in report["dictionary_unconfirmed"] if item["key"] == "Playback speed (< / >)")
+                self.assertEqual(entry["coverage"], "unconfirmed")
+                self.assertIsNone(entry["last_verified_version"])
+                self.assertFalse(entry["sources"][0]["applies_to_audit"])
+                self.assertEqual(report["summary"]["reviewed_source_dictionary_matches"], 0)
+
+    def test_source_labels_follow_dictionary_key_normalization(self):
+        manifest = self.source_manifest(["  Playback   speed (< / >)  "], platforms=["all"])
+        report = self.run_audit(source_manifest=manifest)
+        self.assertEqual(report["summary"]["reviewed_source_dictionary_matches"], 1)
+
+    def test_short_case_source_variant_covers_the_existing_dictionary_entry(self):
+        manifest = self.source_manifest(["playback SPEED (< / >)"])
+        report = self.run_audit(source_manifest=manifest, platform="windows")
+        entry = next(item for item in report["dictionary_not_found"] if item["key"] == "Playback speed (< / >)")
+        self.assertEqual(entry["coverage"], "reviewed-source")
+        self.assertEqual(report["summary"]["reviewed_source_dictionary_matches"], 1)
+        self.assertNotIn(entry["key"], {item["key"] for item in report["dictionary_unconfirmed"]})
+        self.assertFalse(any(item["text"] == "playback SPEED (< / >)" for item in report["new_candidates"]))
+
+    def test_new_config_label_is_a_review_candidate_without_a_bundle_location(self):
+        manifest = self.source_manifest(["New Layout Label"])
+        report = self.run_audit(source_manifest=manifest, platform="windows")
+        candidate = next(item for item in report["new_candidates"] if item["text"] == "New Layout Label")
+        self.assertEqual(candidate["locations"], [])
+        self.assertEqual(candidate["evidence"], ["reviewed-source:official-config"])
+        self.assertEqual(candidate["sources"][0]["id"], "fixture-layout-copy")
+
+    def test_short_case_variant_is_covered_instead_of_reported_as_a_rewrite(self):
+        self.bundle.write_text('const ui={label:"sAvE"};', encoding="utf-8")
+        report = self.run_audit()
+        self.assertFalse(any(item["text"] == "sAvE" for item in report["new_candidates"] + report["possible_rewrites"]))
+        entry = next(item for item in report["dictionary_not_found"] if item["key"] == "Save")
+        self.assertEqual(entry["coverage"], "short-case-match")
+        self.assertEqual(report["summary"]["short_case_dictionary_matches"], 1)
+        self.assertNotIn("Save", {item["key"] for item in report["dictionary_unconfirmed"]})
+
+    def test_long_case_variant_is_not_treated_as_short_case_coverage(self):
+        key = "Message subagent, @ to mention, / for actions"
+        self.bundle.write_text("const ui={label:" + json.dumps(key.upper()) + "};", encoding="utf-8")
+        report = self.run_audit()
+        self.assertIn(key, {item["key"] for item in report["dictionary_unconfirmed"]})
+        self.assertEqual(report["summary"]["short_case_dictionary_matches"], 0)
+        self.assertIn(key.upper(), {item["text"] for item in report["possible_rewrites"]})
+
+    def test_conflicting_short_case_translations_do_not_prove_coverage(self):
+        self.dict_file.write_text('{"Save":"保存","SAVE":"存档"}', encoding="utf-8")
+        self.bundle.write_text('const ui={label:"save"};', encoding="utf-8")
+        report = self.run_audit()
+        self.assertEqual(report["summary"]["short_case_dictionary_matches"], 0)
+        self.assertEqual({item["key"] for item in report["dictionary_unconfirmed"]}, {"Save", "SAVE"})
+
+    def test_source_manifest_rejects_private_values_and_full_config_dumps(self):
+        for key in ("Contact foo@example.com for help", r"Open C:\Users\example\note.txt", "Read https://example.test"):
+            with self.subTest(key=key):
+                manifest = self.source_manifest([key])
+                with self.assertRaises(audit.AuditError):
+                    self.run_audit(source_manifest=manifest, platform="windows")
+        manifest = self.source_manifest(["New Layout Label"])
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
+        raw["runtime_config"] = {"account": "private"}
+        manifest.write_text(json.dumps(raw), encoding="utf-8")
+        with self.assertRaisesRegex(audit.AuditError, "only curated"):
+            self.run_audit(source_manifest=manifest)
+
+    def test_invalid_or_oversized_source_manifest_fails_closed(self):
+        manifest = self.source_manifest(["New Layout Label"])
+        with mock.patch.object(audit, "MAX_SOURCE_BYTES", 2), self.assertRaisesRegex(audit.AuditError, "1 MiB"):
+            self.run_audit(source_manifest=manifest)
+        for source in ('{"schema":2}', '{"schema":true}', '{"schema":1,"sources":{}}', '{"schema":1,"reviews":[null]}'):
+            manifest.write_text(source, encoding="utf-8")
+            with self.subTest(source=source), self.assertRaises(audit.AuditError):
+                self.run_audit(source_manifest=manifest)
+
+    def test_duplicate_manifest_fields_and_normalized_labels_are_rejected(self):
+        manifest = self.source_manifest(["New Layout Label", " New  Layout Label "])
+        with self.assertRaisesRegex(audit.AuditError, "duplicate normalized"):
+            self.run_audit(source_manifest=manifest)
+        manifest.write_text('{"schema":1,"schema":1,"sources":[]}', encoding="utf-8")
+        with self.assertRaisesRegex(audit.AuditError, "duplicate source manifest field"):
+            self.run_audit(source_manifest=manifest)
+
+    def test_review_ledger_is_informational_and_does_not_remove_dictionary_keys(self):
+        manifest = self.source_manifest(["New Layout Label"])
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
+        raw["reviews"] = [{
+            "file": "ui.json", "key": "Save", "translation": "保存", "action": "remove-equivalent",
+            "replacement": {"file": "other.json", "key": "SAVE"}, "verification": "offline-engine",
+            "last_verified_version": "2.99.0", "platforms": ["all"], "reviewed_on": "2026-11-16",
+            "reason": "Review only; never edit dictionaries.",
+        }]
+        manifest.write_text(json.dumps(raw), encoding="utf-8")
+        before = self.dict_file.read_bytes()
+        report = self.run_audit(source_manifest=manifest)
+        self.assertEqual(report["dictionary_reviews"][0]["key"], "Save")
+        self.assertEqual(self.dict_file.read_bytes(), before)
+        self.assertIn("Save", json.loads(self.dict_file.read_text(encoding="utf-8")))
+
+    def test_cli_loads_default_manifest_and_prevents_overwriting_its_inputs(self):
+        manifest = self.source_manifest(["Playback speed (< / >)"])
+        output = self.root / "report.json"
+        arguments = ["--bundle", str(self.bundle), "--version", "2.99.0", "--dict-dir", str(self.dict_dir),
+                     "--platform", "windows"]
+        with mock.patch.object(audit, "DEFAULT_SOURCES", manifest), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(audit.main(arguments + ["--output", str(output)]), 0)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["summary"]["reviewed_source_dictionary_matches"], 1)
+            for destination in (self.bundle, self.dict_file, manifest, self.dict_dir / "new.json"):
+                before = destination.read_bytes() if destination.exists() else None
+                with self.subTest(destination=destination):
+                    self.assertEqual(audit.main(arguments + ["--output", str(destination)]), 1)
+                    self.assertEqual(destination.read_bytes() if destination.exists() else None, before)
 
 
 if __name__ == "__main__":

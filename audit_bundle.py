@@ -5,6 +5,7 @@ import argparse
 from bisect import bisect_right
 from collections import Counter, defaultdict
 import difflib
+from datetime import date
 import hashlib
 import json
 import os
@@ -17,7 +18,10 @@ import hanhua_v2
 
 
 SCHEMA_VERSION = 1
-TOOL_VERSION = "1.0"
+TOOL_VERSION = "1.1"
+DEFAULT_SOURCES = Path(__file__).resolve().parent / "docs" / "translation_sources.json"
+MAX_SOURCE_BYTES = 1024 * 1024
+MAX_SOURCE_KEYS = 10_000
 MAX_BUNDLE_BYTES = 64 * 1024 * 1024
 MAX_REPORT_BYTES = 32 * 1024 * 1024
 MAX_LITERALS = 2_000_000
@@ -513,7 +517,109 @@ def _terminology(entries):
     return findings
 
 
-def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha256=None):
+def _source_manifest(path):
+    """Read only curated static labels and review metadata, never a runtime config dump."""
+    if path is None:
+        return [], [], None
+    path = Path(path)
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise AuditError("duplicate source manifest field")
+            result[key] = value
+        return result
+
+    try:
+        if path.stat().st_size > MAX_SOURCE_BYTES:
+            raise AuditError("source manifest exceeds the 1 MiB limit")
+        data = path.read_bytes()
+        if len(data) > MAX_SOURCE_BYTES:
+            raise AuditError("source manifest exceeds the 1 MiB limit")
+        parsed = json.loads(data.decode("utf-8"), object_pairs_hook=unique_object)
+    except AuditError:
+        raise
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        raise AuditError("cannot read a valid source manifest") from None
+    if not isinstance(parsed, dict) or type(parsed.get("schema")) is not int or parsed["schema"] != 1:
+        raise AuditError("unsupported source manifest schema")
+    if set(parsed) - {"schema", "sources", "reviews"}:
+        raise AuditError("source manifest must contain only curated source and review records")
+
+    def text(value, maximum=300):
+        return (isinstance(value, str) and bool(value.strip()) and len(value) <= maximum
+                and not any(pattern.search(value) for pattern in PRIVATE_DATA_PATTERNS)
+                and all(char.isprintable() or char.isspace() for char in value))
+
+    def metadata(record):
+        version = record.get("last_verified_version")
+        platforms = record.get("platforms")
+        reviewed = record.get("reviewed_on")
+        if (not isinstance(version, str) or not re.fullmatch(r"[0-9]+(?:[.][0-9]+)+", version)
+                or not isinstance(platforms, list) or not platforms
+                or any(platform not in ("all", "windows", "macos") for platform in platforms)
+                or not isinstance(reviewed, str)):
+            raise AuditError("invalid source manifest version, platform or review date")
+        try:
+            date.fromisoformat(reviewed)
+        except ValueError:
+            raise AuditError("invalid source manifest review date") from None
+        return {"last_verified_version": version, "platforms": sorted(set(platforms)), "reviewed_on": reviewed}
+
+    sources = []
+    raw_sources = parsed.get("sources", [])
+    raw_reviews = parsed.get("reviews", [])
+    if (not isinstance(raw_sources, list) or not isinstance(raw_reviews, list)
+            or len(raw_sources) + len(raw_reviews) > MAX_SOURCE_KEYS):
+        raise AuditError("invalid or oversized source manifest records")
+    identifiers = set()
+    total_keys = 0
+    for record in raw_sources:
+        if not isinstance(record, dict):
+            raise AuditError("invalid source manifest source record")
+        identifier = record.get("id")
+        kind = record.get("kind")
+        keys = record.get("keys")
+        if (not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", identifier)
+                or identifier in identifiers or kind not in ("official-config", "platform-ui")
+                or not isinstance(keys, list) or not keys or not all(text(key) for key in keys)):
+            raise AuditError("invalid source manifest static labels")
+        identifiers.add(identifier)
+        if len({hanhua_v2.normalize_text(key) for key in keys}) != len(keys):
+            raise AuditError("duplicate normalized source manifest label")
+        total_keys += len(keys)
+        if total_keys > MAX_SOURCE_KEYS:
+            raise AuditError("source manifest contains too many static labels")
+        sources.append({"id": identifier, "kind": kind, "keys": keys, **metadata(record)})
+
+    def reference(record):
+        if (not isinstance(record, dict) or not text(record.get("key"))
+                or not isinstance(record.get("file"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_.-]+[.]json", record["file"])):
+            raise AuditError("invalid source manifest dictionary reference")
+        return {"file": record["file"], "key": record["key"]}
+
+    reviews = []
+    for record in raw_reviews:
+        ref = reference(record)
+        action = record.get("action")
+        reason = record.get("reason")
+        translation = record.get("translation")
+        verification = record.get("verification")
+        if (action not in ("retain", "remove-equivalent", "remove-obsolete") or not text(reason, 1000)
+                or not text(translation, 1000) or verification not in ("offline-engine", "reviewed-source")):
+            raise AuditError("invalid source manifest dictionary review")
+        review = {**ref, "action": action, "reason": reason, "translation": translation,
+                  "verification": verification, **metadata(record)}
+        if action == "remove-equivalent":
+            review["replacement"] = reference(record.get("replacement"))
+        reviews.append(review)
+    return sources, reviews, {"file": path.name, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+
+
+def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha256=None,
+          source_manifest=None, platform=None):
     path = Path(bundle_path)
     try:
         if path.stat().st_size > MAX_BUNDLE_BYTES:
@@ -534,6 +640,21 @@ def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha2
         raise AuditError("bundle SHA-256 does not match --expect-sha256")
 
     entries, dict_files, dictionary_problems = _dictionary(dict_dir)
+    reviewed_sources, dictionary_reviews, source_file = _source_manifest(source_manifest)
+    if platform not in (None, "windows", "macos"):
+        raise AuditError("platform must be windows or macos when specified")
+    known_sources = defaultdict(list)
+    current_sources = defaultdict(list)
+    for reviewed in reviewed_sources:
+        applicable = (reviewed["last_verified_version"] == version
+                      and ("all" in reviewed["platforms"] or platform in reviewed["platforms"]))
+        description = {key: value for key, value in reviewed.items() if key != "keys"}
+        description["applies_to_audit"] = applicable
+        for key in reviewed["keys"]:
+            normalized = hanhua_v2.normalize_text(key)
+            known_sources[normalized].append(description)
+            if applicable:
+                current_sources[normalized].append(description)
     literals = _scan_bundle(source)
     exact = defaultdict(list)
     dynamic = {}
@@ -554,9 +675,46 @@ def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha2
     dict_by_normalized = {}
     for entry in entries:
         dict_by_normalized.setdefault(entry["normalized"], []).append(entry)
+    short_groups = defaultdict(list)
+    for entry in entries:
+        if entry["normalized"].isascii() and len(entry["normalized"]) < 30:
+            short_groups[entry["normalized"].lower()].append(entry)
+    short_matches = {key: items for key, items in short_groups.items() if len({item["value"] for item in items}) == 1}
+    bundle_short = defaultdict(list)
+    for value in sorted(bundle_texts):
+        if value.isascii() and len(value) < 30:
+            bundle_short[value.lower()].append(value)
     missing = [entry for normalized, items in dict_by_normalized.items() if normalized not in bundle_texts
                for entry in items]
-    available_missing = [{**entry, "_tokens": _tokens(entry["normalized"])} for entry in missing]
+    def covered_by_case(value):
+        return bool(value.isascii() and len(value) < 30 and value.lower() in short_matches)
+
+    def has_bundle_case(entry):
+        value = entry["normalized"]
+        return covered_by_case(value) and bool(bundle_short.get(value.lower()))
+
+    known_source_short = defaultdict(list)
+    current_source_short = defaultdict(list)
+    for mapping, short_mapping in ((known_sources, known_source_short), (current_sources, current_source_short)):
+        for value, records in mapping.items():
+            if value.isascii() and len(value) < 30:
+                short_mapping[value.lower()].extend(records)
+
+    def sources_for_entry(entry, historical=False):
+        value = entry["normalized"]
+        mapping = known_sources if historical else current_sources
+        short_mapping = known_source_short if historical else current_source_short
+        records = list(mapping.get(value, []))
+        if covered_by_case(value):
+            seen = {record["id"] for record in records}
+            for record in short_mapping.get(value.lower(), ()):
+                if record["id"] not in seen:
+                    records.append(record)
+                    seen.add(record["id"])
+        return records
+
+    available_missing = [{**entry, "_tokens": _tokens(entry["normalized"])} for entry in missing
+                         if not has_bundle_case(entry) and not sources_for_entry(entry)]
     missing_by_token = defaultdict(list)
     for entry in available_missing:
         for token in entry["_tokens"]:
@@ -567,6 +725,9 @@ def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha2
         if normalized in dict_by_normalized:
             continue
         occurrences = exact[normalized]
+        if covered_by_case(normalized):
+            excluded["covered-by-short-case-match"] += len(occurrences)
+            continue
         representative = min(occurrences, key=lambda item: item["char_offset"])
         evidence_set = {item["evidence"] for item in occurrences}
         filter_evidence = ("ui-context" if any(value.startswith("ui-property:")
@@ -582,7 +743,9 @@ def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha2
         near = _nearby_matches(normalized, available_missing, similarity, missing_by_token)
         record = {"text": normalized, "occurrences": len(occurrences), "locations": locations,
                   "evidence": sorted({item["evidence"] for item in occurrences}),
-                  "nearby_dictionary_entries": near}
+                  "nearby_dictionary_entries": near,
+                  "sources": [{"kind": "bundle", "id": path.name, "last_verified_version": version,
+                               "platforms": [platform] if platform else [], "sha256": bundle_hash}]}
         if near:
             record["classification"] = "possible-rewrite"
             possible_rewrites.append(record)
@@ -590,16 +753,47 @@ def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha2
             record["classification"] = "new-candidate"
         additions.append(record)
 
+    for normalized, sources in sorted(current_sources.items()):
+        if normalized in bundle_texts or normalized in dict_by_normalized or covered_by_case(normalized):
+            continue
+        near = _nearby_matches(normalized, available_missing, similarity, missing_by_token)
+        record = {"text": normalized, "occurrences": len(sources), "locations": [],
+                  "evidence": sorted({"reviewed-source:" + item["kind"] for item in sources}),
+                  "nearby_dictionary_entries": near, "sources": sources,
+                  "classification": "possible-rewrite" if near else "new-candidate"}
+        additions.append(record)
+        if near:
+            possible_rewrites.append(record)
+
     dictionary_not_found = []
+    dictionary_unconfirmed = []
+    case_matches = []
+    source_matches = []
     rewrite_keys = {match["key"] for candidate in possible_rewrites
                     for match in candidate["nearby_dictionary_entries"]}
     for entry in missing:
-        dictionary_not_found.append({
+        case_found = has_bundle_case(entry)
+        source_found = bool(sources_for_entry(entry))
+        record = {
             "file": entry["file"], "key": entry["key"],
             "classification": "not-found-in-bundle",
             "review_note": "May be rewritten, conditionally loaded, or legacy; do not delete automatically.",
             "possible_rewrite_seen": entry["key"] in rewrite_keys,
-        })
+            "coverage": "short-case-match" if case_found else "reviewed-source" if source_found else "unconfirmed",
+            "sources": sources_for_entry(entry, historical=True),
+            "last_verified_version": version if case_found or source_found else None,
+        }
+        dictionary_not_found.append(record)
+        if case_found:
+            case_matches.append({"file": entry["file"], "key": entry["key"],
+                                 "bundle_texts": bundle_short[entry["normalized"].lower()]})
+        elif not source_found:
+            dictionary_unconfirmed.append({**record, "classification": "not-found-in-reviewed-sources"})
+    for entry in entries:
+        source_records = sources_for_entry(entry)
+        if source_records:
+            source_matches.append({"file": entry["file"], "key": entry["key"],
+                                   "sources": source_records})
 
     placeholder_findings = []
     for entry in entries:
@@ -630,6 +824,10 @@ def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha2
                    "bytes": len(data), "sha256": bundle_hash,
                    "expected_sha256_match": bool(expected_sha256)},
         "dictionaries": dict_files,
+        "source_manifest": source_file,
+        "platform": platform or "unspecified",
+        "reviewed_sources": reviewed_sources,
+        "dictionary_reviews": dictionary_reviews,
         "summary": {
             "string_occurrences": sum(1 for item in literals if item["kind"] == "string"),
             "dynamic_template_occurrences": sum(1 for item in literals if item["kind"] == "template"),
@@ -637,6 +835,8 @@ def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha2
             "exact_dictionary_matches": sum(1 for value in bundle_texts if value in dict_by_normalized),
             "new_candidates": sum(1 for item in additions if item["classification"] == "new-candidate"),
             "possible_rewrites": len(possible_rewrites), "dictionary_not_found": len(dictionary_not_found),
+            "short_case_dictionary_matches": len(case_matches), "reviewed_source_dictionary_matches": len(source_matches),
+            "dictionary_unconfirmed": len(dictionary_unconfirmed),
             "dynamic_templates": len(dynamic), "placeholder_reviews": len(placeholder_findings),
             "terminology_reviews": len(_terminology(entries)),
         },
@@ -647,6 +847,9 @@ def audit(bundle_path, version, dict_dir="dicts", similarity=0.85, expected_sha2
         "possible_rewrites": possible_rewrites,
         "dynamic_templates": sorted(dynamic.values(), key=lambda item: item["template"]),
         "dictionary_not_found": dictionary_not_found,
+        "dictionary_unconfirmed": dictionary_unconfirmed,
+        "short_case_matches": case_matches,
+        "reviewed_source_matches": source_matches,
         "placeholder_reviews": placeholder_findings,
         "terminology_reviews": _terminology(entries),
         "dictionary_integrity": {"problems": dictionary_problems},
@@ -695,13 +898,25 @@ def main(argv=None):
     parser.add_argument("--output", help="write JSON report here; default is stdout")
     parser.add_argument("--expect-sha256", help="fail closed unless the bundle hash matches this value")
     parser.add_argument("--similarity", type=float, default=0.85, help="review-only rewrite threshold (default: 0.85)")
+    parser.add_argument("--sources", default=str(DEFAULT_SOURCES) if DEFAULT_SOURCES.is_file() else None,
+                        help="curated static source and review manifest (default: docs/translation_sources.json if present)")
+    parser.add_argument("--platform", choices=("windows", "macos"),
+                        help="confirmed bundle platform; required to apply platform-specific reviewed sources")
     args = parser.parse_args(argv)
     if not args.version.strip() or not 0.85 <= args.similarity <= 1:
         parser.error("--version must be non-empty and --similarity must be between 0.85 and 1")
     if args.expect_sha256 and not re.fullmatch(r"[0-9a-fA-F]{64}", args.expect_sha256):
         parser.error("--expect-sha256 must contain 64 hexadecimal characters")
     try:
-        report = audit(args.bundle, args.version.strip(), args.dict_dir, args.similarity, args.expect_sha256)
+        if args.output:
+            destination = Path(args.output).resolve()
+            inputs = {Path(args.bundle).resolve()}
+            if args.sources:
+                inputs.add(Path(args.sources).resolve())
+            if destination in inputs or destination.is_relative_to(Path(args.dict_dir).resolve()):
+                raise AuditError("report output must not replace inputs or dictionary files")
+        report = audit(args.bundle, args.version.strip(), args.dict_dir, args.similarity, args.expect_sha256,
+                       args.sources, args.platform)
         if not _write_report(report, args.output):
             print("[error] report write failed", file=sys.stderr)
             return 1
@@ -713,6 +928,7 @@ def main(argv=None):
     print(f"[report] new={report['summary']['new_candidates']} "
           f"possible-rewrites={report['summary']['possible_rewrites']} "
           f"not-found={report['summary']['dictionary_not_found']} "
+          f"unconfirmed={report['summary']['dictionary_unconfirmed']} "
           f"dynamic={report['summary']['dynamic_templates']}", file=sys.stderr)
     return 0
 
